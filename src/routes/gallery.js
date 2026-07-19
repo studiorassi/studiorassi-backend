@@ -6,21 +6,27 @@ const { authMiddleware } = require('../middlewares/auth');
 // ============================================================
 // SIMULAÇÃO DE BANCO DE DADOS (para demonstração)
 // ============================================================
-// Em produção, substituir por um banco real (PostgreSQL, MongoDB, etc.)
 const userCredits = new Map();
-userCredits.set('cliente@studio.com', 30); // Mock de créditos
+userCredits.set('cliente@studio.com', 30);
 
 // ============================================================
-// ROTA: Visualizar imagem com marca d'água
+// ROTA: Visualizar imagem com marca d'água - PÚBLICA
 // GET /api/gallery/view/:imageKey
 // ============================================================
-router.get('/view/:imageKey', authMiddleware, async (req, res) => {
+// 🔓 REMOVIDO O MIDDLEWARE DE AUTENTICAÇÃO
+// As miniaturas com marca d'água e baixa qualidade são públicas
+router.get('/view/:imageKey', async (req, res) => {
   try {
     const { imageKey } = req.params;
     const { width, height } = req.query;
 
-    // Verifica se o cliente tem acesso à imagem (opcional)
-    // Pode verificar se o imageKey pertence ao cliente
+    // Opcional: verificação básica para evitar acesso a arquivos sensíveis
+    if (!imageKey || imageKey.includes('..')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Chave de imagem inválida',
+      });
+    }
 
     // Busca e processa a imagem
     const processedImage = await s3Service.getWatermarkedImage(imageKey, {
@@ -34,6 +40,15 @@ router.get('/view/:imageKey', authMiddleware, async (req, res) => {
     res.send(processedImage);
   } catch (error) {
     console.error('Erro ao visualizar imagem:', error);
+    
+    // Retorna uma imagem de erro genérica (opcional)
+    if (error.name === 'NoSuchKey') {
+      return res.status(404).json({
+        success: false,
+        message: 'Imagem não encontrada',
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Erro ao processar imagem',
@@ -42,15 +57,15 @@ router.get('/view/:imageKey', authMiddleware, async (req, res) => {
 });
 
 // ============================================================
-// ROTA: Baixar imagens em alta resolução
+// ROTA: Baixar imagens em alta resolução - PROTEGIDA
 // POST /api/gallery/download
 // ============================================================
+// 🔒 MANTIDA A PROTEÇÃO JWT
 router.post('/download', authMiddleware, async (req, res) => {
   try {
     const { imageKeys } = req.body;
     const userEmail = req.user.email;
 
-    // Validação da requisição
     if (!imageKeys || !Array.isArray(imageKeys) || imageKeys.length === 0) {
       return res.status(400).json({
         success: false,
@@ -58,9 +73,6 @@ router.post('/download', authMiddleware, async (req, res) => {
       });
     }
 
-    // ============================================================
-    // 1. VALIDAÇÃO DE CRÉDITOS (Mock)
-    // ============================================================
     const availableCredits = userCredits.get(userEmail) || 0;
     const requiredCredits = imageKeys.length;
 
@@ -76,26 +88,17 @@ router.post('/download', authMiddleware, async (req, res) => {
       });
     }
 
-    // ============================================================
-    // 2. DÉBITO DE CRÉDITOS (Mock)
-    // ============================================================
     userCredits.set(userEmail, availableCredits - requiredCredits);
 
-    // ============================================================
-    // 3. GERAÇÃO DE URLs PRÉ-ASSINADAS
-    // ============================================================
-    const signedUrls = await s3Service.generatePresignedUrls(imageKeys, 300); // 5 minutos
+    const signedUrls = await s3Service.generatePresignedUrls(imageKeys, 300);
 
-    // ============================================================
-    // 4. RETORNO
-    // ============================================================
     res.status(200).json({
       success: true,
       message: `Download autorizado para ${imageKeys.length} imagem(ns)`,
       data: {
         urls: signedUrls,
         creditsRemaining: userCredits.get(userEmail),
-        expiresIn: 300, // segundos
+        expiresIn: 300,
       },
     });
   } catch (error) {
@@ -108,7 +111,7 @@ router.post('/download', authMiddleware, async (req, res) => {
 });
 
 // ============================================================
-// ROTA: Obter créditos do usuário
+// ROTA: Obter créditos do usuário - PROTEGIDA
 // GET /api/gallery/credits
 // ============================================================
 router.get('/credits', authMiddleware, async (req, res) => {
