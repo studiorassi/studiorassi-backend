@@ -12,26 +12,45 @@ const app = express();
 // MIDDLEWARES
 // ============================================================
 
-// CORS - Configurado para aceitar requisições do Front-end
+// ===== CONFIGURAÇÃO CORS COMPLETA =====
+// Permite requisições do Front-end hospedado no GitHub Pages
 app.use(cors({
   origin: [
+    // Front-end em desenvolvimento
     'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5500',
+    
+    // Front-end em produção (GitHub Pages)
     'https://studiorassi.github.io',
     'https://studiorassi.github.io/home',
-    // Adicione outros domínios permitidos
+    'https://studiorassi.github.io/cliente',
+    
+    // Permite qualquer subdomínio do GitHub Pages (para testes)
+    /\.github\.io$/,
   ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'Origin',
+    'X-Requested-With',
+  ],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
   credentials: true,
+  maxAge: 86400, // 24 horas em cache para preflight
 }));
+
+// ===== MIDDLEWARE PARA LOGGING DE CORS (OPCIONAL) =====
+app.use((req, res, next) => {
+  console.log(`📡 ${req.method} ${req.path} - Origin: ${req.headers.origin || 'local'}`);
+  next();
+});
 
 // Parser JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Logging
-app.use((req, res, next) => {
-  console.log(`📡 ${req.method} ${req.path}`);
-  next();
-});
 
 // ============================================================
 // ROTAS
@@ -43,6 +62,7 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Studio Rassi API is running!',
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
