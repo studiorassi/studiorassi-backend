@@ -14,12 +14,11 @@ app.listen(PORT, () => {
   console.log(`🌐 Ambiente: ${process.env.NODE_ENV || 'development'}`);
   console.log(`📦 Bucket S3: ${process.env.S3_BUCKET_NAME || 'not configured'}`);
   console.log('========================================');
+  console.log('🔓 Rota pública: /api/gallery/view/:imageKey');
+  console.log('🔒 Rotas protegidas: /api/gallery/download, /api/gallery/credits');
+  console.log('========================================');
   console.log('✅ API pronta para uso!');
 });
-
-// ============================================================
-// TRATAMENTO DE ERROS NÃO CAPTURADOS
-// ============================================================
 
 process.on('uncaughtException', (error) => {
   console.error('❌ Exceção não capturada:', error);
