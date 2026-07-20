@@ -1,79 +1,50 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 require('dotenv').config();
 
 const galleryRoutes = require('./routes/gallery');
+const authRoutes = require('./routes/auth'); // NOVO
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 
-// ============================================================
-// MIDDLEWARES
-// ============================================================
-
-// ===== CONFIGURAÇÃO CORS COMPLETA =====
-// Permite requisições do Front-end hospedado no GitHub Pages
+// ===== CONFIGURAÇÃO CORS =====
 app.use(cors({
   origin: [
-    // Front-end em desenvolvimento
     'http://localhost:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5500',
-    
-    // Front-end em produção (GitHub Pages)
     'https://studiorassi.github.io',
     'https://studiorassi.github.io/home',
     'https://studiorassi.github.io/cliente',
-    
-    // Permite qualquer subdomínio do GitHub Pages (para testes)
     /\.github\.io$/,
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Accept',
-    'Origin',
-    'X-Requested-With',
-  ],
-  exposedHeaders: ['Content-Length', 'Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin'],
   credentials: true,
-  maxAge: 86400, // 24 horas em cache para preflight
+  maxAge: 86400,
 }));
 
-// ===== MIDDLEWARE PARA LOGGING DE CORS (OPCIONAL) =====
-app.use((req, res, next) => {
-  console.log(`📡 ${req.method} ${req.path} - Origin: ${req.headers.origin || 'local'}`);
-  next();
-});
-
-// Parser JSON
+// Middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ============================================================
-// ROTAS
-// ============================================================
-
-// Health Check
+// ===== ROTAS =====
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Studio Rassi API is running!',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
   });
 });
 
-// Rotas da Galeria
+// Rotas de Autenticação (NOVAS)
+app.use('/api/auth', authRoutes);
+
+// Rotas da Galeria (protegidas)
 app.use('/api/gallery', galleryRoutes);
 
-// ============================================================
-// TRATAMENTO DE ERROS
-// ============================================================
-
-// 404 - Rota não encontrada
+// ===== TRATAMENTO DE ERROS =====
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -81,7 +52,6 @@ app.use((req, res) => {
   });
 });
 
-// Error Handler Global
 app.use(errorHandler);
 
 module.exports = app;
