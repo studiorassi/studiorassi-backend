@@ -1,0 +1,14 @@
+# Cofre de Senhas e Chaves (NUNCA SUBIR)
+.env
+
+# Dependências do Projeto (Arquivos muito pesados)
+node_modules/
+
+# Logs de Erro
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Arquivos de Sistema Operacional (Mac/Windows)
+.DS_Store
+Thumbs.db
