@@ -18,7 +18,8 @@ class S3Service {
       width = 800,
       height = null,
       watermarkText = process.env.WATERMARK_TEXT || '© Studio Rassi',
-      watermarkOpacity = parseFloat(process.env.WATERMARK_OPACITY) || 0.3,
+      // Aumentado para 0.6 para tornar a marca d'água mais visível e protegida
+      watermarkOpacity = parseFloat(process.env.WATERMARK_OPACITY) || 0.6,
     } = options;
 
     try {
@@ -64,7 +65,7 @@ class S3Service {
         withoutEnlargement: true,
       });
 
-      // 5. Gera o SVG da marca d'água com XML válido
+      // 5. Gera o SVG da marca d'água com XML válido e mais destacado
       const watermarkSvg = this.generateWatermarkSvg(
         resizeWidth,
         resizeHeight,
@@ -72,20 +73,20 @@ class S3Service {
         watermarkOpacity
       );
 
-      // 6. Aplica a marca d'água
+      // 6. Aplica a marca d'água (usando 'over' para maior nitidez sobre a foto)
       sharpInstance = sharpInstance.composite([
         {
           input: Buffer.from(watermarkSvg),
           gravity: 'center',
-          blend: 'overlay',
+          blend: 'over',
         },
       ]);
 
-      // 7. Converte para WebP
+      // 7. Converte para WebP altamente comprimido (leveza e velocidade máxima)
       const processedBuffer = await sharpInstance
         .webp({
-          quality: 85,
-          effort: 6,
+          quality: 50,  // Compactação agressiva para carregar instantaneamente em KB
+          effort: 3,    // Processamento rápido no servidor Render
           lossless: false,
         })
         .toBuffer();
@@ -111,7 +112,7 @@ class S3Service {
         
         return await sharp(fallbackBuffer)
           .resize(width, height, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 85 })
+          .webp({ quality: 50 })
           .toBuffer();
       } catch (fallbackError) {
         console.error('❌ Fallback também falhou:', fallbackError.message);
@@ -121,19 +122,17 @@ class S3Service {
   }
 
   /**
-   * Gera um SVG válido para a marca d'água
+   * Gera um SVG válido para a marca d'água com mais destaque
    */
   generateWatermarkSvg(width, height, text, opacity) {
-    // Calcula o tamanho da fonte proporcional à imagem
-    const fontSize = Math.min(width, height) * 0.08;
-    const fontSizeSub = fontSize * 0.4;
+    // Aumentado o fator de proporção de 0.08 para 0.12 para o texto ficar maior e mais visível
+    const fontSize = Math.min(width, height) * 0.12;
+    const fontSizeSub = fontSize * 0.45;
     const lineHeight = fontSize * 1.2;
     const subOffset = lineHeight * 0.8;
 
-    // Escapa caracteres especiais no texto
     const escapedText = this.escapeXml(text);
 
-    // Cria o SVG com XML válido (escapando caracteres especiais)
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
@@ -142,18 +141,22 @@ class S3Service {
         .watermark-main {
           font-family: 'Arial', 'Helvetica', sans-serif;
           font-size: ${fontSize}px;
-          font-weight: 700;
+          font-weight: 800;
           fill: rgba(255, 255, 255, ${opacity});
-          letter-spacing: 3px;
+          stroke: rgba(0, 0, 0, 0.4);
+          stroke-width: 2px;
+          letter-spacing: 4px;
           text-anchor: middle;
           dominant-baseline: central;
         }
         .watermark-sub {
           font-family: 'Arial', 'Helvetica', sans-serif;
           font-size: ${fontSizeSub}px;
-          font-weight: 300;
-          fill: rgba(255, 255, 255, ${opacity * 0.7});
-          letter-spacing: 4px;
+          font-weight: 600;
+          fill: rgba(255, 255, 255, ${opacity * 0.9});
+          stroke: rgba(0, 0, 0, 0.3);
+          stroke-width: 1px;
+          letter-spacing: 5px;
           text-anchor: middle;
           dominant-baseline: central;
         }
@@ -234,12 +237,11 @@ class S3Service {
   /**
    * Aplica marca d'água usando uma logo PNG (opcional)
    */
-  async applyLogoWatermark(imageBuffer, logoBuffer, opacity = 0.15, logoSize = 0.3) {
+  async applyLogoWatermark(imageBuffer, logoBuffer, opacity = 0.3, logoSize = 0.35) {
     try {
       const metadata = await sharp(imageBuffer).metadata();
       const { width, height } = metadata;
 
-      // Redimensiona a logo para 30% da largura da imagem
       const logoWidth = Math.round(width * logoSize);
       const logoHeight = Math.round(height * (logoSize * 0.5));
 
@@ -256,11 +258,11 @@ class S3Service {
           {
             input: resizedLogo,
             gravity: 'center',
-            blend: 'overlay',
+            blend: 'over',
             opacity,
           },
         ])
-        .webp({ quality: 85 })
+        .webp({ quality: 50 })
         .toBuffer();
 
       return result;
