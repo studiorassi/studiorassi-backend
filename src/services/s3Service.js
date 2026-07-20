@@ -19,8 +19,8 @@ class S3Service {
     const {
       width = 800,
       height = null,
-      watermarkOpacity = 0.35, // Visibilidade equilibrada da logo
-      logoSize = 0.40,         // Tamanho da logo ocupando 40% da foto
+      watermarkOpacity = 0.60, // Visibilidade equilibrada da logo
+      logoSize = 0.90,         // Tamanho da logo ocupando 90% da foto
     } = options;
 
     try {
