@@ -4,6 +4,7 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { s3Client } = require('../config/aws');
+const axios = require('axios'); // Para baixar a logo da URL
 
 /**
  * Serviço para interação com Amazon S3
@@ -19,8 +20,8 @@ class S3Service {
     const {
       width = 800,
       height = null,
-      watermarkOpacity = 50.0, // Visibilidade equilibrada da logo
-      logoSize = 90.0,         // Tamanho da logo ocupando 90% da foto
+      watermarkOpacity = 0.5, // 50% de opacidade (0.0 a 1.0)
+      logoSize = 0.9,         // 90% da largura da imagem
     } = options;
 
     try {
@@ -58,48 +59,89 @@ class S3Service {
         resizeHeight = originalHeight;
       }
 
-      // 4. Redimensiona a foto base para a miniatura rápida
+      // 4. Redimensiona a foto base
       let sharpInstance = sharp(imageBuffer);
       sharpInstance = sharpInstance.resize(resizeWidth, resizeHeight, {
         fit: 'inside',
         withoutEnlargement: true,
       });
 
-      // 5. Carrega a logo oficial do repositório local e aplica como marca d'água
+      // 5. Carrega a logo oficial da URL e aplica como marca d'água
       try {
-        // Caminho absoluto apontando para assets/images/logo/logo-header.png
-        const logoPath = path.join(__dirname, '../..', 'assets', 'images', 'logo', 'logo-header.png');
+        // URL da logo oficial
+        const logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo-header.png';
         
-        if (fs.existsSync(logoPath)) {
-          const logoBuffer = fs.readFileSync(logoPath);
-          
-          const logoWidth = Math.round(resizeWidth * logoSize);
-          
-          // Redimensiona e prepara a logo oficial (deixa branca/brilhante para destacar na foto escura/clara)
-          const resizedLogo = await sharp(logoBuffer)
-            .resize({ width: logoWidth, fit: 'inside' })
-            .ensureAlpha()
-            .toBuffer();
+        // Baixa a logo da URL
+        const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
+        const logoBuffer = Buffer.from(logoResponse.data);
 
-          // Aplica a logo no centro da imagem com efeito de sobreposição profissional
-          sharpInstance = sharpInstance.composite([
-            {
-              input: resizedLogo,
-              gravity: 'center',
-              blend: 'over',
-              opacity: watermarkOpacity,
-            },
-          ]);
-        }
+        // Calcula o tamanho da logo: 90% da largura da imagem
+        const logoWidth = Math.round(resizeWidth * logoSize);
+        
+        // Redimensiona a logo mantendo a proporção
+        const resizedLogo = await sharp(logoBuffer)
+          .resize({
+            width: logoWidth,
+            height: Math.round(logoWidth * 0.25), // Proporção aproximada da logo (ajuste conforme necessário)
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .ensureAlpha()
+          .toBuffer();
+
+        // Aplica a logo no centro da imagem com opacidade de 50%
+        sharpInstance = sharpInstance.composite([
+          {
+            input: resizedLogo,
+            gravity: 'center',
+            blend: 'over',
+            opacity: watermarkOpacity, // 0.5 = 50%
+          },
+        ]);
       } catch (logoError) {
-        console.warn('⚠️ Não foi possível carregar a logo local, prosseguindo sem ela:', logoError.message);
+        console.warn('⚠️ Não foi possível carregar a logo da URL:', logoError.message);
+        console.warn('⚠️ Tentando carregar do caminho local...');
+        
+        // Fallback: tenta carregar do caminho local
+        try {
+          const logoPath = path.join(__dirname, '../..', 'assets', 'images', 'logo', 'logo-header.png');
+          
+          if (fs.existsSync(logoPath)) {
+            const logoBuffer = fs.readFileSync(logoPath);
+            
+            const logoWidth = Math.round(resizeWidth * logoSize);
+            
+            const resizedLogo = await sharp(logoBuffer)
+              .resize({
+                width: logoWidth,
+                height: Math.round(logoWidth * 0.25),
+                fit: 'inside',
+                withoutEnlargement: true,
+              })
+              .ensureAlpha()
+              .toBuffer();
+
+            sharpInstance = sharpInstance.composite([
+              {
+                input: resizedLogo,
+                gravity: 'center',
+                blend: 'over',
+                opacity: watermarkOpacity,
+              },
+            ]);
+          } else {
+            console.warn('⚠️ Logo não encontrada em nenhum local, prosseguindo sem marca d\'água.');
+          }
+        } catch (localError) {
+          console.warn('⚠️ Erro ao carregar logo local:', localError.message);
+        }
       }
 
-      // 6. Converte para WebP altamente comprimido (leveza e velocidade máxima em KB)
+      // 6. Converte para WebP comprimido
       const processedBuffer = await sharpInstance
         .webp({
-          quality: 50,  // Compactação agressiva para carregar instantaneamente
-          effort: 3,    // Processamento rápido no servidor Render
+          quality: 50,
+          effort: 3,
           lossless: false,
         })
         .toBuffer();
@@ -110,6 +152,7 @@ class S3Service {
       
       // Fallback: se falhar, retorna a imagem redimensionada limpa
       try {
+        console.warn('⚠️ Tentando retornar imagem sem watermark...');
         const fallbackCommand = new GetObjectCommand({
           Bucket: process.env.S3_BUCKET_NAME,
           Key: key,
@@ -128,6 +171,67 @@ class S3Service {
       } catch (fallbackError) {
         throw error;
       }
+    }
+  }
+
+  /**
+   * Versão alternativa: Aplica a marca d'água com configurações personalizadas
+   * Útil para quando você precisa de mais controle sobre o processo
+   */
+  async applyWatermarkWithOptions(imageBuffer, options = {}) {
+    const {
+      logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo-header.png',
+      opacity = 0.5,
+      sizePercentage = 0.9,
+      position = 'center', // 'center', 'bottom-right', etc.
+    } = options;
+
+    try {
+      const metadata = await sharp(imageBuffer).metadata();
+      const { width, height } = metadata;
+
+      // Baixa a logo
+      const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
+      const logoBuffer = Buffer.from(logoResponse.data);
+
+      // Calcula tamanho da logo
+      const logoWidth = Math.round(width * sizePercentage);
+      
+      const resizedLogo = await sharp(logoBuffer)
+        .resize({
+          width: logoWidth,
+          height: Math.round(logoWidth * 0.25),
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .ensureAlpha()
+        .toBuffer();
+
+      // Define a posição (gravidade)
+      const gravityMap = {
+        'center': 'center',
+        'bottom-right': 'southeast',
+        'bottom-left': 'southwest',
+        'top-right': 'northeast',
+        'top-left': 'northwest',
+      };
+
+      const result = await sharp(imageBuffer)
+        .composite([
+          {
+            input: resizedLogo,
+            gravity: gravityMap[position] || 'center',
+            blend: 'over',
+            opacity,
+          },
+        ])
+        .webp({ quality: 85 })
+        .toBuffer();
+
+      return result;
+    } catch (error) {
+      console.error('❌ Erro ao aplicar watermark com opções:', error.message);
+      throw error;
     }
   }
 
