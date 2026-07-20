@@ -22,7 +22,7 @@ class S3Service {
       width = 800,
       height = null,
       watermarkOpacity = 0.5, // 50% de opacidade
-      logoSize = 0.9,         // 90% da largura da imagem (cobre quase toda a foto)
+      logoSize = 0.9,         // 90% da largura da imagem
     } = options;
 
     try {
@@ -69,47 +69,47 @@ class S3Service {
 
       // 5. Carrega a logo e aplica ocupando 90% da imagem
       try {
-        // URL da logo oficial
-        const logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo-header.png';
+        // 🔥 NOVO CAMINHO: logo_branco.png
+        const logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo_branco.png';
         
         // Baixa a logo da URL
         const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
         const logoBuffer = Buffer.from(logoResponse.data);
 
-        // 🔥 CALCULA O TAMANHO DA LOGO: 90% DA LARGURA DA IMAGEM
+        // Calcula o tamanho da logo: 90% da largura da imagem
         const logoWidth = Math.round(resizeWidth * logoSize);
-        // Altura proporcional para manter a proporção da logo (geralmente 1:3 ou 1:4)
-        const logoHeight = Math.round(resizeHeight * 0.3); // 30% da altura para não distorcer
+        const logoHeight = Math.round(resizeHeight * 0.3);
 
-        // Redimensiona a logo mantendo a proporção, mas ocupando 90% da largura
+        // Redimensiona a logo mantendo a proporção
         const resizedLogo = await sharp(logoBuffer)
           .resize({
             width: logoWidth,
             height: logoHeight,
-            fit: 'contain',     // Mantém a proporção dentro do box
-            background: { r: 0, g: 0, b: 0, alpha: 0 }, // Fundo transparente
+            fit: 'contain',
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
           })
           .ensureAlpha()
           .toBuffer();
 
-        // 🔥 APLICA A LOGO NO CENTRO DA IMAGEM
+        // Aplica a logo no centro da imagem
         sharpInstance = sharpInstance.composite([
           {
             input: resizedLogo,
-            gravity: 'center',  // Centraliza na imagem
+            gravity: 'center',
             blend: 'over',
-            opacity: watermarkOpacity, // 50% de opacidade
+            opacity: watermarkOpacity,
           },
         ]);
 
-        console.log(`✅ Logo aplicada com sucesso: ${logoWidth}x${logoHeight} (${Math.round(logoSize * 100)}% da imagem)`);
+        console.log(`✅ Logo branca aplicada com sucesso: ${logoWidth}x${logoHeight} (${Math.round(logoSize * 100)}% da imagem)`);
 
       } catch (logoError) {
         console.warn('⚠️ Não foi possível carregar a logo da URL:', logoError.message);
         
         // Fallback: tenta carregar do caminho local
         try {
-          const logoPath = path.join(__dirname, '../..', 'assets', 'images', 'logo', 'logo-header.png');
+          // 🔥 NOVO CAMINHO LOCAL: logo_branco.png
+          const logoPath = path.join(__dirname, '../..', 'assets', 'images', 'logo', 'logo_branco.png');
           
           if (fs.existsSync(logoPath)) {
             const logoBuffer = fs.readFileSync(logoPath);
@@ -136,9 +136,9 @@ class S3Service {
               },
             ]);
             
-            console.log(`✅ Logo aplicada (fallback local): ${logoWidth}x${logoHeight}`);
+            console.log(`✅ Logo branca aplicada (fallback local): ${logoWidth}x${logoHeight}`);
           } else {
-            console.warn('⚠️ Logo não encontrada em nenhum local, prosseguindo sem marca d\'água.');
+            console.warn('⚠️ Logo branca não encontrada em nenhum local, prosseguindo sem marca d\'água.');
           }
         } catch (localError) {
           console.warn('⚠️ Erro ao carregar logo local:', localError.message);
