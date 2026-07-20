@@ -4,7 +4,7 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { s3Client } = require('../config/aws');
-const axios = require('axios'); // Para baixar a logo da URL
+const axios = require('axios');
 
 /**
  * Serviço para interação com Amazon S3
@@ -12,6 +12,7 @@ const axios = require('axios'); // Para baixar a logo da URL
 class S3Service {
   /**
    * Busca uma imagem do S3, aplica a logo oficial como marca d'água e redimensiona
+   * A logo ocupa 90% da imagem para proteção contra prints
    * @param {string} key - Chave da imagem no S3
    * @param {Object} options - Opções de processamento
    * @returns {Promise<Buffer>} - Imagem processada
@@ -20,8 +21,8 @@ class S3Service {
     const {
       width = 800,
       height = null,
-      watermarkOpacity = 0.5, // 50% de opacidade (0.0 a 1.0)
-      logoSize = 0.9,         // 90% da largura da imagem
+      watermarkOpacity = 0.5, // 50% de opacidade
+      logoSize = 0.9,         // 90% da largura da imagem (cobre quase toda a foto)
     } = options;
 
     try {
@@ -66,7 +67,7 @@ class S3Service {
         withoutEnlargement: true,
       });
 
-      // 5. Carrega a logo oficial da URL e aplica como marca d'água
+      // 5. Carrega a logo e aplica ocupando 90% da imagem
       try {
         // URL da logo oficial
         const logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo-header.png';
@@ -75,32 +76,36 @@ class S3Service {
         const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
         const logoBuffer = Buffer.from(logoResponse.data);
 
-        // Calcula o tamanho da logo: 90% da largura da imagem
+        // 🔥 CALCULA O TAMANHO DA LOGO: 90% DA LARGURA DA IMAGEM
         const logoWidth = Math.round(resizeWidth * logoSize);
-        
-        // Redimensiona a logo mantendo a proporção
+        // Altura proporcional para manter a proporção da logo (geralmente 1:3 ou 1:4)
+        const logoHeight = Math.round(resizeHeight * 0.3); // 30% da altura para não distorcer
+
+        // Redimensiona a logo mantendo a proporção, mas ocupando 90% da largura
         const resizedLogo = await sharp(logoBuffer)
           .resize({
             width: logoWidth,
-            height: Math.round(logoWidth * 0.25), // Proporção aproximada da logo (ajuste conforme necessário)
-            fit: 'inside',
-            withoutEnlargement: true,
+            height: logoHeight,
+            fit: 'contain',     // Mantém a proporção dentro do box
+            background: { r: 0, g: 0, b: 0, alpha: 0 }, // Fundo transparente
           })
           .ensureAlpha()
           .toBuffer();
 
-        // Aplica a logo no centro da imagem com opacidade de 50%
+        // 🔥 APLICA A LOGO NO CENTRO DA IMAGEM
         sharpInstance = sharpInstance.composite([
           {
             input: resizedLogo,
-            gravity: 'center',
+            gravity: 'center',  // Centraliza na imagem
             blend: 'over',
-            opacity: watermarkOpacity, // 0.5 = 50%
+            opacity: watermarkOpacity, // 50% de opacidade
           },
         ]);
+
+        console.log(`✅ Logo aplicada com sucesso: ${logoWidth}x${logoHeight} (${Math.round(logoSize * 100)}% da imagem)`);
+
       } catch (logoError) {
         console.warn('⚠️ Não foi possível carregar a logo da URL:', logoError.message);
-        console.warn('⚠️ Tentando carregar do caminho local...');
         
         // Fallback: tenta carregar do caminho local
         try {
@@ -110,13 +115,14 @@ class S3Service {
             const logoBuffer = fs.readFileSync(logoPath);
             
             const logoWidth = Math.round(resizeWidth * logoSize);
-            
+            const logoHeight = Math.round(resizeHeight * 0.3);
+
             const resizedLogo = await sharp(logoBuffer)
               .resize({
                 width: logoWidth,
-                height: Math.round(logoWidth * 0.25),
-                fit: 'inside',
-                withoutEnlargement: true,
+                height: logoHeight,
+                fit: 'contain',
+                background: { r: 0, g: 0, b: 0, alpha: 0 },
               })
               .ensureAlpha()
               .toBuffer();
@@ -129,6 +135,8 @@ class S3Service {
                 opacity: watermarkOpacity,
               },
             ]);
+            
+            console.log(`✅ Logo aplicada (fallback local): ${logoWidth}x${logoHeight}`);
           } else {
             console.warn('⚠️ Logo não encontrada em nenhum local, prosseguindo sem marca d\'água.');
           }
@@ -171,67 +179,6 @@ class S3Service {
       } catch (fallbackError) {
         throw error;
       }
-    }
-  }
-
-  /**
-   * Versão alternativa: Aplica a marca d'água com configurações personalizadas
-   * Útil para quando você precisa de mais controle sobre o processo
-   */
-  async applyWatermarkWithOptions(imageBuffer, options = {}) {
-    const {
-      logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo-header.png',
-      opacity = 0.5,
-      sizePercentage = 0.9,
-      position = 'center', // 'center', 'bottom-right', etc.
-    } = options;
-
-    try {
-      const metadata = await sharp(imageBuffer).metadata();
-      const { width, height } = metadata;
-
-      // Baixa a logo
-      const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
-      const logoBuffer = Buffer.from(logoResponse.data);
-
-      // Calcula tamanho da logo
-      const logoWidth = Math.round(width * sizePercentage);
-      
-      const resizedLogo = await sharp(logoBuffer)
-        .resize({
-          width: logoWidth,
-          height: Math.round(logoWidth * 0.25),
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .ensureAlpha()
-        .toBuffer();
-
-      // Define a posição (gravidade)
-      const gravityMap = {
-        'center': 'center',
-        'bottom-right': 'southeast',
-        'bottom-left': 'southwest',
-        'top-right': 'northeast',
-        'top-left': 'northwest',
-      };
-
-      const result = await sharp(imageBuffer)
-        .composite([
-          {
-            input: resizedLogo,
-            gravity: gravityMap[position] || 'center',
-            blend: 'over',
-            opacity,
-          },
-        ])
-        .webp({ quality: 85 })
-        .toBuffer();
-
-      return result;
-    } catch (error) {
-      console.error('❌ Erro ao aplicar watermark com opções:', error.message);
-      throw error;
     }
   }
 
