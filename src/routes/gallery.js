@@ -57,6 +57,38 @@ router.get('/view/:imageKey', async (req, res) => {
 });
 
 // ============================================================
+// ROTA: Obter total de fotos disponíveis
+// GET /api/gallery/count
+// ============================================================
+router.get('/count', async (req, res) => {
+  try {
+    // Opção A: Se você tem uma lista fixa de chaves no código
+    const totalPhotos = 116; // Ou busque de um arquivo de configuração
+    
+    // Opção B: Se quiser contar dinamicamente do S3 (mais lento)
+    // const listCommand = new ListObjectsV2Command({
+    //   Bucket: process.env.S3_BUCKET_NAME,
+    //   Prefix: 'ensaio_',
+    // });
+    // const listResponse = await s3Client.send(listCommand);
+    // const totalPhotos = listResponse.KeyCount || 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        total: totalPhotos,
+      },
+    });
+  } catch (error) {
+    console.error('Erro ao buscar total de fotos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar total de fotos',
+    });
+  }
+});
+
+// ============================================================
 // ROTA: Baixar imagens em alta resolução - PROTEGIDA
 // POST /api/gallery/download
 // ============================================================
