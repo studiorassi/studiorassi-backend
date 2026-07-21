@@ -1,57 +1,41 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
-
-const galleryRoutes = require('./routes/gallery');
-const authRoutes = require('./routes/auth'); // NOVO
-const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 
-// ===== CONFIGURAÇÃO CORS =====
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:5500',
-    'https://studiorassi.github.io',
-    'https://studiorassi.github.io/home',
-    'https://studiorassi.github.io/cliente',
-    /\.github\.io$/,
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin'],
-  credentials: true,
-  maxAge: 86400,
-}));
-
 // Middlewares
+app.use(helmet());
+app.use(cors({
+  origin: ['https://studiorassi.github.io', 'http://localhost:3000'],
+  credentials: true
+}));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// ===== ROTAS =====
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Studio Rassi API is running!',
-    timestamp: new Date().toISOString(),
-  });
-});
+// Importar rotas
+const galleryRoutes = require('./routes/gallery');
+const authRoutes = require('./routes/auth');
+const { authenticateToken } = require('./middlewares/auth');
 
-// Rotas de Autenticação (NOVAS)
+// Rotas públicas
 app.use('/api/auth', authRoutes);
 
-// Rotas da Galeria (protegidas)
-app.use('/api/gallery', galleryRoutes);
+// Rotas protegidas
+app.use('/api/gallery', authenticateToken, galleryRoutes);
 
-// ===== TRATAMENTO DE ERROS =====
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Rota não encontrada',
-  });
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Error handler
+const { errorHandler } = require('./middlewares/errorHandler');
 app.use(errorHandler);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+});
 
 module.exports = app;
