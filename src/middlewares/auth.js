@@ -1,61 +1,36 @@
 const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'studio-rassi-secret-key-2026';
 
-/**
- * Middleware de autenticação JWT
- * Verifica se o token é válido antes de permitir acesso às rotas
- */
-const authMiddleware = (req, res, next) => {
-  try {
-    // Busca o token no header Authorization
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token de autenticação não fornecido',
-      });
-    }
-
-    const token = authHeader.split(' ')[1];
-
-    // Verifica e decodifica o token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Adiciona os dados do usuário ao request
-    req.user = decoded;
-
-    next();
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Token inválido',
-      });
-    }
-
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Token expirado',
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: 'Erro ao autenticar',
-    });
+// Middleware para verificar token JWT
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Token não fornecido' });
   }
-};
+  
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ error: 'Token inválido ou expirado' });
+    }
+    
+    req.userId = decoded.userId;
+    req.userEmail = decoded.email;
+    req.isAdmin = decoded.isAdmin || false;
+    next();
+  });
+}
 
-/**
- * Gera um token JWT para o cliente
- */
-const generateToken = (userId, email) => {
-  return jwt.sign(
-    { userId, email },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  );
-};
+// Middleware para verificar se é admin
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) {
+    return res.status(403).json({ error: 'Acesso negado. Requer privilégios de administrador.' });
+  }
+  next();
+}
 
-module.exports = { authMiddleware, generateToken };
+module.exports = {
+  authenticateToken,
+  requireAdmin
+};
