@@ -1,3 +1,4 @@
+// src/middlewares/auth.js
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'studio-rassi-secret-key-2026';
 
