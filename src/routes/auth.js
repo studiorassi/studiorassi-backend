@@ -1,12 +1,11 @@
+// src/routes/auth.js
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
+const { authenticateToken, requireAdmin } = require('../middlewares/auth');
 
-// ============================================================
-// CONFIGURAÇÕES
-// ============================================================
 const JWT_SECRET = process.env.JWT_SECRET || 'studio-rassi-secret-key-2026';
 
 // ============================================================
@@ -16,14 +15,10 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // Valida campos
     if (!email || !password) {
-      return res.status(400).json({ 
-        error: 'Email e senha são obrigatórios' 
-      });
+      return res.status(400).json({ error: 'Email e senha são obrigatórios' });
     }
     
-    // Busca usuário no banco
     const result = await pool.query(
       'SELECT id, name, email, password_hash, credits, is_admin FROM users WHERE email = $1',
       [email]
@@ -52,7 +47,6 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    // Retorna dados (sem a senha)
     res.json({
       token,
       user: {
@@ -73,9 +67,8 @@ router.post('/login', async (req, res) => {
 // ============================================================
 // ROTA PARA OBTER CRÉDITOS ATUAIS
 // ============================================================
-router.get('/credits', async (req, res) => {
+router.get('/credits', authenticateToken, async (req, res) => {
   try {
-    // Obtém userId do token (middleware auth já verificou)
     const userId = req.userId;
     
     const result = await pool.query(
@@ -96,9 +89,9 @@ router.get('/credits', async (req, res) => {
 });
 
 // ============================================================
-// ROTA PARA DEBITAR CRÉDITO (CHAMADA NO DOWNLOAD)
+// ROTA PARA DEBITAR CRÉDITO
 // ============================================================
-router.post('/debit-credit', async (req, res) => {
+router.post('/debit-credit', authenticateToken, async (req, res) => {
   try {
     const userId = req.userId;
     const { imageKey } = req.body;
@@ -107,13 +100,11 @@ router.post('/debit-credit', async (req, res) => {
       return res.status(400).json({ error: 'imageKey é obrigatório' });
     }
     
-    // Inicia transação
     const client = await pool.connect();
     
     try {
       await client.query('BEGIN');
       
-      // Verifica créditos atuais
       const userResult = await client.query(
         'SELECT credits FROM users WHERE id = $1 FOR UPDATE',
         [userId]
@@ -129,20 +120,17 @@ router.post('/debit-credit', async (req, res) => {
         throw new Error('Créditos insuficientes');
       }
       
-      // Debita 1 crédito
       await client.query(
         'UPDATE users SET credits = credits - 1 WHERE id = $1',
         [userId]
       );
       
-      // Registra o download no histórico
       await client.query(
         `INSERT INTO downloads (user_id, image_key, downloaded_at) 
          VALUES ($1, $2, NOW())`,
         [userId, imageKey]
       );
       
-      // Busca novo saldo
       const newCreditsResult = await client.query(
         'SELECT credits FROM users WHERE id = $1',
         [userId]
@@ -174,36 +162,22 @@ router.post('/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// ROTA ADMIN - RESTAURAR CRÉDITOS (SOMENTE VOCÊ)
+// ROTA ADMIN - RESTAURAR CRÉDITOS
 // ============================================================
-router.post('/admin/restore-credits', async (req, res) => {
+router.post('/admin/restore-credits', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const adminId = req.userId;
     const { userId, amount } = req.body;
-    
-    // Verifica se o usuário é admin
-    const adminResult = await pool.query(
-      'SELECT is_admin FROM users WHERE id = $1',
-      [adminId]
-    );
-    
-    if (adminResult.rows.length === 0 || !adminResult.rows[0].is_admin) {
-      return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
-    }
-    
-    // Valida amount
     const creditsToAdd = parseInt(amount) || 30;
+    
     if (creditsToAdd <= 0) {
       return res.status(400).json({ error: 'Quantidade inválida' });
     }
     
-    // Restaura créditos
     await pool.query(
       'UPDATE users SET credits = credits + $1 WHERE id = $2',
       [creditsToAdd, userId]
     );
     
-    // Busca novo saldo
     const result = await pool.query(
       'SELECT credits FROM users WHERE id = $1',
       [userId]
@@ -224,22 +198,15 @@ router.post('/admin/restore-credits', async (req, res) => {
 // ============================================================
 // ROTA ADMIN - RESTAURAR CRÉDITOS POR EMAIL
 // ============================================================
-router.post('/admin/restore-by-email', async (req, res) => {
+router.post('/admin/restore-by-email', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const adminId = req.userId;
     const { email, amount } = req.body;
+    const creditsToAdd = parseInt(amount) || 30;
     
-    // Verifica admin
-    const adminResult = await pool.query(
-      'SELECT is_admin FROM users WHERE id = $1',
-      [adminId]
-    );
-    
-    if (adminResult.rows.length === 0 || !adminResult.rows[0].is_admin) {
-      return res.status(403).json({ error: 'Acesso negado' });
+    if (!email) {
+      return res.status(400).json({ error: 'Email é obrigatório' });
     }
     
-    // Busca usuário por email
     const userResult = await pool.query(
       'SELECT id, credits FROM users WHERE email = $1',
       [email]
@@ -250,9 +217,7 @@ router.post('/admin/restore-by-email', async (req, res) => {
     }
     
     const userId = userResult.rows[0].id;
-    const creditsToAdd = parseInt(amount) || 30;
     
-    // Restaura créditos
     await pool.query(
       'UPDATE users SET credits = credits + $1 WHERE id = $2',
       [creditsToAdd, userId]
@@ -272,6 +237,90 @@ router.post('/admin/restore-by-email', async (req, res) => {
   } catch (error) {
     console.error('Erro ao restaurar créditos por email:', error);
     res.status(500).json({ error: 'Erro ao restaurar créditos' });
+  }
+});
+
+// ============================================================
+// ROTA ADMIN - ATUALIZAR CLIENTE
+// ============================================================
+router.post('/admin/update-client', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, email, password, credits = 30 } = req.body;
+    
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Nome, email e senha são obrigatórios' });
+    }
+    
+    // Gerar hash da senha
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+    
+    // Atualizar ou criar usuário
+    const result = await pool.query(
+      `INSERT INTO users (name, email, password_hash, credits) 
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO UPDATE 
+       SET name = EXCLUDED.name, 
+           password_hash = EXCLUDED.password_hash,
+           credits = EXCLUDED.credits
+       RETURNING id, name, email, credits`,
+      [name, email, passwordHash, credits]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Cliente atualizado com sucesso!',
+      user: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('Erro ao atualizar cliente:', error);
+    res.status(500).json({ error: 'Erro ao atualizar cliente' });
+  }
+});
+
+// ============================================================
+// ROTA ADMIN - EXPIRAR ACESSO
+// ============================================================
+router.post('/admin/expire-access', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId é obrigatório' });
+    }
+    
+    // Deleta o usuário (ou desativa)
+    await pool.query(
+      'DELETE FROM users WHERE id = $1 AND is_admin = false',
+      [userId]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Acesso do usuário ${userId} expirado com sucesso!` 
+    });
+    
+  } catch (error) {
+    console.error('Erro ao expirar acesso:', error);
+    res.status(500).json({ error: 'Erro ao expirar acesso' });
+  }
+});
+
+// ============================================================
+// ROTA ADMIN - LISTAR USUÁRIOS
+// ============================================================
+router.get('/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, email, credits, is_admin, created_at FROM users ORDER BY id'
+    );
+    
+    res.json({ users: result.rows });
+    
+  } catch (error) {
+    console.error('Erro ao listar usuários:', error);
+    res.status(500).json({ error: 'Erro ao listar usuários' });
   }
 });
 
