@@ -39,7 +39,7 @@ async function initDatabase() {
     );
 
     if (adminCheck.rows.length === 0) {
-      // Inserir usuário admin (VOCÊ)
+      // Inserir usuário admin (VOCÊ) - senha: admin123
       await client.query(`
         INSERT INTO users (name, email, password_hash, credits, is_admin) 
         VALUES (
@@ -60,7 +60,7 @@ async function initDatabase() {
     );
 
     if (clientCheck.rows.length === 0) {
-      // Inserir usuário cliente (Lucille e Edson)
+      // Inserir usuário cliente (Lucille e Edson) - senha: 123456
       await client.query(`
         INSERT INTO users (name, email, password_hash, credits) 
         VALUES (
