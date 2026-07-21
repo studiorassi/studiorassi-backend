@@ -1,3 +1,4 @@
+// src/app.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -8,7 +9,7 @@ const app = express();
 // Middlewares
 app.use(helmet());
 app.use(cors({
-  origin: ['https://studiorassi.github.io', 'http://localhost:3000'],
+  origin: ['https://studiorassi.github.io', 'https://api-studiorassi.onrender.com'],
   credentials: true
 }));
 app.use(express.json());
@@ -26,16 +27,15 @@ app.use('/api/gallery', authenticateToken, galleryRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    db: process.env.DATABASE_URL ? 'connected' : 'not configured'
+  });
 });
 
 // Error handler
 const { errorHandler } = require('./middlewares/errorHandler');
 app.use(errorHandler);
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
-});
 
 module.exports = app;
