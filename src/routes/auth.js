@@ -185,4 +185,76 @@ router.post('/admin/restore-credits', authenticateToken, requireAdmin, async (re
   }
 });
 
+// ============================================================
+// ROTA PARA DEBITAR CRÉDITO
+// ============================================================
+router.post('/debit-credit', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { imageKey } = req.body;
+    
+    if (!imageKey) {
+      return res.status(400).json({ error: 'imageKey é obrigatório' });
+    }
+    
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      const userResult = await client.query(
+        'SELECT credits FROM users WHERE id = $1 FOR UPDATE',
+        [userId]
+      );
+      
+      if (userResult.rows.length === 0) {
+        throw new Error('Usuário não encontrado');
+      }
+      
+      const currentCredits = userResult.rows[0].credits;
+      
+      if (currentCredits <= 0) {
+        throw new Error('Créditos insuficientes');
+      }
+      
+      await client.query(
+        'UPDATE users SET credits = credits - 1 WHERE id = $1',
+        [userId]
+      );
+      
+      await client.query(
+        'INSERT INTO downloads (user_id, image_key) VALUES ($1, $2)',
+        [userId, imageKey]
+      );
+      
+      const newCreditsResult = await client.query(
+        'SELECT credits FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      await client.query('COMMIT');
+      
+      res.json({ 
+        success: true, 
+        credits: newCreditsResult.rows[0].credits 
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro ao debitar crédito:', error);
+    
+    if (error.message === 'Créditos insuficientes') {
+      return res.status(403).json({ error: 'Créditos insuficientes' });
+    }
+    
+    res.status(500).json({ error: 'Erro ao processar download' });
+  }
+});
+
 module.exports = router;
