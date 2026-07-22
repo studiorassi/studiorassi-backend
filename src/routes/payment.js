@@ -65,7 +65,8 @@ router.post('/create-payment', authenticateToken, async (req, res) => {
     res.json({
       payment_url: plan.payment_url,
       plan_id: planId,
-      credits: plan.amount
+      credits: plan.amount,
+      preference_id: `plan_${planId}_${userId}_${Date.now()}`
     });
     
   } catch (error) {
@@ -182,6 +183,66 @@ router.get('/last-payment', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('❌ Erro ao buscar último pagamento:', error);
     res.status(500).json({ error: 'Erro ao buscar pagamento' });
+  }
+});
+
+// ============================================================
+// VERIFICAR STATUS DO PAGAMENTO (NOVA ROTA)
+// ============================================================
+router.post('/check-status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { planId, preferenceId } = req.body;
+    
+    // Busca o pedido mais recente
+    const result = await pool.query(
+      `SELECT status, credits, created_at, id FROM payments 
+       WHERE user_id = $1 AND plan_id = $2 
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId, planId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Pagamento não encontrado' });
+    }
+    
+    const payment = result.rows[0];
+    
+    // Se o status for 'pending', verifica se já passou muito tempo
+    if (payment.status === 'pending') {
+      const createdAt = new Date(payment.created_at);
+      const now = new Date();
+      const diffMinutes = (now - createdAt) / 60000;
+      
+      // Se passou mais de 30 minutos, considera como falha
+      if (diffMinutes > 30) {
+        await pool.query(
+          'UPDATE payments SET status = $1 WHERE id = $2',
+          ['failed', payment.id]
+        );
+        payment.status = 'failed';
+      }
+    }
+    
+    // Busca o novo saldo do usuário se o pagamento foi aprovado
+    let newBalance = 0;
+    if (payment.status === 'approved') {
+      const userResult = await pool.query(
+        'SELECT credits FROM users WHERE id = $1',
+        [userId]
+      );
+      newBalance = userResult.rows[0].credits;
+    }
+    
+    res.json({
+      status: payment.status,
+      credits: payment.credits,
+      newBalance: newBalance
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar status:', error);
+    res.status(500).json({ error: 'Erro ao verificar pagamento' });
   }
 });
 
