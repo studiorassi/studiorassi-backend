@@ -74,33 +74,37 @@ async function criarUsuarioSeNaoExistir() {
 }
 
 // ============================================================
-// CRIA USUÁRIO ADMIN (se não existir) - NOVO
+// FORÇAR CRIAÇÃO DO ADMIN (RESETA A SENHA)
 // ============================================================
-async function criarAdminSeNaoExistir() {
+async function forcarCriacaoAdmin() {
   const client = await pool.connect();
   try {
-    const check = await client.query(
-      'SELECT * FROM users WHERE email = $1',
+    console.log('🔧 Forçando criação/atualização do admin...');
+    
+    // Remove o admin existente (se houver)
+    await client.query(
+      'DELETE FROM users WHERE email = $1',
       ['admin@studio.com']
     );
     
-    if (check.rows.length === 0) {
-      await client.query(`
-        INSERT INTO users (name, email, password_hash, credits, is_admin) 
-        VALUES (
-          'Admin Studio', 
-          'admin@studio.com', 
-          '$2b$10$P8XkXhF5VxhQwEhk.6kP2.vKH3z3Yh3kq3h3kq3h3kq3h3kq3h3kq3',
-          999, 
-          true
-        )
-      `);
-      console.log('✅ Usuário admin criado! (admin@studio.com / admin123)');
-    } else {
-      console.log('✅ Usuário admin já existe.');
-    }
+    // Cria o admin novamente
+    await client.query(`
+      INSERT INTO users (name, email, password_hash, credits, is_admin) 
+      VALUES (
+        'Admin Studio', 
+        'admin@studio.com', 
+        '$2b$10$P8XkXhF5VxhQwEhk.6kP2.vKH3z3Yh3kq3h3kq3h3kq3h3kq3h3kq3',
+        999, 
+        true
+      )
+    `);
+    
+    console.log('✅ Admin recriado com sucesso!');
+    console.log('👑 Email: admin@studio.com');
+    console.log('🔑 Senha: admin123');
+    
   } catch (error) {
-    console.error('❌ Erro ao criar admin:', error);
+    console.error('❌ Erro ao forçar criação do admin:', error);
   } finally {
     client.release();
   }
@@ -145,8 +149,8 @@ async function restaurarCreditos() {
     // 4. Criar usuário cliente
     await criarUsuarioSeNaoExistir();
     
-    // 5. Criar usuário admin (NOVO)
-    await criarAdminSeNaoExistir();
+    // 5. FORÇAR CRIAÇÃO DO ADMIN (reseta a senha)
+    await forcarCriacaoAdmin();
     
     // 6. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
     // await restaurarCreditos();
