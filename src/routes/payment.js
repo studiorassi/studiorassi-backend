@@ -3,17 +3,9 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middlewares/auth');
 const { pool } = require('../config/database');
-const { MercadoPagoConfig, Preference } = require('mercadopago');
 
 // ============================================================
-// CONFIGURAÇÃO MERCADO PAGO (NOVA VERSÃO)
-// ============================================================
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN || 'dummy_token'
-});
-
-// ============================================================
-// PLANOS DE CRÉDITOS (links fixos)
+// PLANOS DE CRÉDITOS (links fixos do Mercado Pago)
 // ============================================================
 const CREDIT_PLANS = {
   5: { 
@@ -43,7 +35,7 @@ const CREDIT_PLANS = {
 };
 
 // ============================================================
-// CRIAR PAGAMENTO (USANDO LINKS FIXOS)
+// CRIAR PAGAMENTO (REDIRECIONA PARA LINK FIXO)
 // ============================================================
 router.post('/create-payment', authenticateToken, async (req, res) => {
   try {
@@ -55,13 +47,14 @@ router.post('/create-payment', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Plano inválido' });
     }
     
-    // Registra o pedido no banco
+    // Registra o pedido no banco (status: pending)
     await pool.query(
       `INSERT INTO payments (user_id, plan_id, credits, amount, status, preference_id) 
        VALUES ($1, $2, $3, $4, 'pending', $5)`,
       [userId, planId, plan.amount, plan.price, `plan_${planId}_${userId}_${Date.now()}`]
     );
     
+    // Retorna a URL fixa do Mercado Pago
     res.json({
       payment_url: plan.payment_url,
       plan_id: planId,
@@ -76,15 +69,20 @@ router.post('/create-payment', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
-// WEBHOOK
+// WEBHOOK - CONFIRMAÇÃO DE PAGAMENTO
 // ============================================================
 router.post('/webhook', async (req, res) => {
-  console.log('📥 Webhook recebido:', req.body);
-  res.status(200).send();
+  try {
+    console.log('📥 Webhook recebido:', req.body);
+    res.status(200).send();
+  } catch (error) {
+    console.error('❌ Erro no webhook:', error);
+    res.status(500).json({ error: 'Erro no processamento do webhook' });
+  }
 });
 
 // ============================================================
-// CONFIRMAR PAGAMENTO
+// CONFIRMAR PAGAMENTO (CHAMADO PELO CLIENTE)
 // ============================================================
 router.post('/confirm-payment', authenticateToken, async (req, res) => {
   try {
@@ -96,7 +94,7 @@ router.post('/confirm-payment', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Plano inválido' });
     }
     
-    // Verifica se já foi aprovado
+    // Verifica se o pagamento já foi processado
     const checkResult = await pool.query(
       `SELECT * FROM payments 
        WHERE user_id = $1 AND plan_id = $2 AND status = 'approved'`,
@@ -156,45 +154,13 @@ router.post('/confirm-payment', authenticateToken, async (req, res) => {
 });
 
 // ============================================================
-// ÚLTIMO PAGAMENTO
-// ============================================================
-router.get('/last-payment', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT status, credits, plan_id, created_at FROM payments 
-       WHERE user_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 1`,
-      [req.userId]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.json({ hasPayment: false });
-    }
-    
-    res.json({
-      hasPayment: true,
-      status: result.rows[0].status,
-      credits: result.rows[0].credits,
-      planId: result.rows[0].plan_id,
-      createdAt: result.rows[0].created_at
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao buscar último pagamento:', error);
-    res.status(500).json({ error: 'Erro ao buscar pagamento' });
-  }
-});
-
-// ============================================================
-// VERIFICAR STATUS DO PAGAMENTO (NOVA ROTA)
+// CHECK-STATUS - VERIFICAR STATUS DO PAGAMENTO
 // ============================================================
 router.post('/check-status', authenticateToken, async (req, res) => {
   try {
     const userId = req.userId;
     const { planId, preferenceId } = req.body;
     
-    // Busca o pedido mais recente
     const result = await pool.query(
       `SELECT status, credits, created_at, id FROM payments 
        WHERE user_id = $1 AND plan_id = $2 
@@ -208,13 +174,12 @@ router.post('/check-status', authenticateToken, async (req, res) => {
     
     const payment = result.rows[0];
     
-    // Se o status for 'pending', verifica se já passou muito tempo
+    // Se passou mais de 30 minutos, considera falha
     if (payment.status === 'pending') {
       const createdAt = new Date(payment.created_at);
       const now = new Date();
       const diffMinutes = (now - createdAt) / 60000;
       
-      // Se passou mais de 30 minutos, considera como falha
       if (diffMinutes > 30) {
         await pool.query(
           'UPDATE payments SET status = $1 WHERE id = $2',
@@ -224,7 +189,6 @@ router.post('/check-status', authenticateToken, async (req, res) => {
       }
     }
     
-    // Busca o novo saldo do usuário se o pagamento foi aprovado
     let newBalance = 0;
     if (payment.status === 'approved') {
       const userResult = await pool.query(
