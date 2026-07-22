@@ -42,52 +42,33 @@ async function createPaymentsTable() {
 }
 
 // ============================================================
-// CRIA USUÁRIO CLIENTE (se não existir)
-// ============================================================
-async function criarUsuarioSeNaoExistir() {
-  const client = await pool.connect();
-  try {
-    const check = await client.query(
-      'SELECT * FROM users WHERE email = $1',
-      ['lucille_e_edson']
-    );
-    
-    if (check.rows.length === 0) {
-      await client.query(`
-        INSERT INTO users (name, email, password_hash, credits) 
-        VALUES (
-          'Lucille e Edson', 
-          'lucille_e_edson', 
-          '$2b$10$Q7Z8W9X0Y1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2V3W4X5',
-          30
-        )
-      `);
-      console.log('✅ Usuário lucille_e_edson criado!');
-    } else {
-      console.log('✅ Usuário lucille_e_edson já existe.');
-    }
-  } catch (error) {
-    console.error('❌ Erro ao criar usuário:', error);
-  } finally {
-    client.release();
-  }
-}
-
-// ============================================================
-// FORÇAR CRIAÇÃO DO ADMIN (RESETA A SENHA)
+// FORÇAR CRIAÇÃO DO ADMIN (COM VERIFICAÇÃO EXTREMA)
 // ============================================================
 async function forcarCriacaoAdmin() {
   const client = await pool.connect();
   try {
-    console.log('🔧 Forçando criação/atualização do admin...');
+    console.log('🔧 FORÇANDO criação/atualização do admin...');
     
-    // Remove o admin existente (se houver)
-    await client.query(
-      'DELETE FROM users WHERE email = $1',
+    // Verifica se a coluna is_admin existe
+    try {
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE
+      `);
+      console.log('✅ Coluna is_admin verificada/criada');
+    } catch (err) {
+      console.log('⚠️ Coluna is_admin:', err.message);
+    }
+    
+    // Remove admin antigo
+    const deleteResult = await client.query(
+      'DELETE FROM users WHERE email = $1 RETURNING id',
       ['admin@studio.com']
     );
+    if (deleteResult.rowCount > 0) {
+      console.log(`🗑️ Admin antigo removido (ID: ${deleteResult.rows[0].id})`);
+    }
     
-    // Cria o admin novamente
+    // Cria admin novo
     await client.query(`
       INSERT INTO users (name, email, password_hash, credits, is_admin) 
       VALUES (
@@ -99,33 +80,22 @@ async function forcarCriacaoAdmin() {
       )
     `);
     
-    console.log('✅ Admin recriado com sucesso!');
-    console.log('👑 Email: admin@studio.com');
-    console.log('🔑 Senha: admin123');
+    // Verifica
+    const checkResult = await client.query(
+      'SELECT id, name, email, credits, is_admin FROM users WHERE email = $1',
+      ['admin@studio.com']
+    );
+    
+    if (checkResult.rowCount > 0) {
+      console.log('✅ ADMIN CRIADO COM SUCESSO!');
+      console.log(`👑 Email: admin@studio.com`);
+      console.log(`🔑 Senha: admin123`);
+    } else {
+      console.log('❌ FALHA: Admin não foi criado!');
+    }
     
   } catch (error) {
     console.error('❌ Erro ao forçar criação do admin:', error);
-  } finally {
-    client.release();
-  }
-}
-
-// ============================================================
-// RESTAURAR CRÉDITOS (OPCIONAL)
-// ============================================================
-async function restaurarCreditos() {
-  const client = await pool.connect();
-  try {
-    const usuario = 'lucille_e_edson';
-    const novosCreditos = 30;
-    
-    await client.query(
-      'UPDATE users SET credits = $1 WHERE email = $2',
-      [novosCreditos, usuario]
-    );
-    console.log(`✅ Créditos de "${usuario}" restaurados para ${novosCreditos}!`);
-  } catch (error) {
-    console.error('❌ Erro ao restaurar créditos:', error);
   } finally {
     client.release();
   }
@@ -136,30 +106,15 @@ async function restaurarCreditos() {
 // ============================================================
 (async () => {
   try {
-    // 1. Testar conexão com o banco
     await pool.query('SELECT NOW()');
     console.log('✅ Conexão com banco OK');
     
-    // 2. Inicializar tabelas principais
     await initDatabase();
-    
-    // 3. Criar tabela payments
     await createPaymentsTable();
-    
-    // 4. Criar usuário cliente
-    await criarUsuarioSeNaoExistir();
-    
-    // 5. FORÇAR CRIAÇÃO DO ADMIN (reseta a senha)
     await forcarCriacaoAdmin();
     
-    // 6. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
-    // await restaurarCreditos();
-    
-    // 7. Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
-      console.log(`📊 Banco de dados: ${process.env.DATABASE_URL ? 'Conectado' : 'NÃO CONECTADO'}`);
-      console.log(`👤 Cliente: lucille_e_edson`);
       console.log(`👑 Admin: admin@studio.com / admin123`);
     });
     
