@@ -15,11 +15,18 @@ app.use(express.json());
 
 const galleryRoutes = require('./routes/gallery');
 const authRoutes = require('./routes/auth');
+const paymentRoutes = require('./routes/payment'); // NOVO
 const { authenticateToken } = require('./middlewares/auth');
 
-// ============================================================
-// ROTAS PÚBLICAS (APENAS HEALTH E LOGIN)
-// ============================================================
+// Rotas públicas
+app.use('/api/auth', authRoutes);
+app.use('/api/payment/webhook', paymentRoutes); // Webhook público
+
+// Rotas protegidas
+app.use('/api/gallery', authenticateToken, galleryRoutes);
+app.use('/api/payment', authenticateToken, paymentRoutes);
+
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -28,13 +35,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ============================================================
-// ROTAS PROTEGIDAS (TODAS AS DEMAIS)
-// ============================================================
-app.use('/api/auth', authRoutes); // login é público, mas as outras rotas são protegidas
-app.use('/api/gallery', authenticateToken, galleryRoutes); // TODAS as rotas da galeria são protegidas
-
-// Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   res.status(500).json({ error: 'Erro interno do servidor' });
@@ -42,10 +42,8 @@ app.use((err, req, res, next) => {
 
 console.log('✅ Studio Rassi API carregada!');
 console.log('📌 Rotas:');
-console.log('  POST /api/auth/login (pública)');
-console.log('  GET  /api/auth/credits (protegida)');
-console.log('  POST /api/auth/debit-credit (protegida)');
-console.log('  GET  /api/gallery/view/:key (protegida)');
-console.log('  POST /api/gallery/download (protegida)');
+console.log('  POST /api/payment/create-payment (protegida)');
+console.log('  GET  /api/payment/payment-status/:id (protegida)');
+console.log('  POST /api/payment/webhook (pública)');
 
 module.exports = app;
