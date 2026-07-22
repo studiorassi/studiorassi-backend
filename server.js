@@ -6,20 +6,8 @@ const { initDatabase } = require('./src/config/initDb');
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
-// FUNÇÃO PARA CRIAR/ATUALIZAR USUÁRIO (APENAS USUÁRIO E SENHA)
+// FUNÇÃO PARA CRIAR TABELA PAYMENTS
 // ============================================================
-async function criarOuAtualizarUsuario() {
-  const client = await pool.connect();
-  try {
-    // DADOS DO CLIENTE ATUAL (EDITAR AQUI QUANDO MUDAR)
-    // =====================================================
-    const usuario = 'lucille_e_edson';        // ← Login do cliente
-    const senhaHash = '$2a$12$OB2EbZYk8qYHu8EzkarXdemxysG4EQCsFcC.JQB3qoZ/PXnHPmUoy'; // ← Hash da senha (072026_l&e)
-    const nome = 'Lucille e Edson';           // ← Nome que aparece no site
-    const creditos = 30;                      // ← Quantos créditos iniciais
-    // =====================================================
-
-    // Adicione no server.js, ANTES de iniciar o servidor
 async function createPaymentsTable() {
   const client = await pool.connect();
   try {
@@ -39,7 +27,6 @@ async function createPaymentsTable() {
     `);
     console.log('✅ Tabela "payments" criada/verificada');
     
-    // Cria índices
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
       CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
@@ -54,85 +41,46 @@ async function createPaymentsTable() {
   }
 }
 
-// Dentro do bloco (async () => { ... }), adicione:
-await createPaymentsTable();
-    
-    // Verifica se o usuário existe
+// ============================================================
+// CRIA USUÁRIO AUTOMATICAMENTE (se não existir)
+// ============================================================
+async function criarUsuarioSeNaoExistir() {
+  const client = await pool.connect();
+  try {
     const check = await client.query(
       'SELECT * FROM users WHERE email = $1',
-      [usuario]
+      ['lucille_e_edson']
     );
     
     if (check.rows.length === 0) {
-      // CRIA novo usuário
       await client.query(`
         INSERT INTO users (name, email, password_hash, credits) 
-        VALUES ($1, $2, $3, $4)
-      `, [nome, usuario, senhaHash, creditos]);
-      console.log(`✅ Usuário "${usuario}" CRIADO com ${creditos} créditos!`);
+        VALUES (
+          'Lucille e Edson', 
+          'lucille_e_edson', 
+          '$2b$10$Q7Z8W9X0Y1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2V3W4X5',
+          30
+        )
+      `);
+      console.log('✅ Usuário lucille_e_edson criado!');
     } else {
-      // ATUALIZA usuário existente
-      await client.query(`
-        UPDATE users 
-        SET name = $1, 
-            password_hash = $2, 
-            credits = $3 
-        WHERE email = $4
-      `, [nome, senhaHash, creditos, usuario]);
-      console.log(`✅ Usuário "${usuario}" ATUALIZADO com ${creditos} créditos!`);
+      console.log('✅ Usuário lucille_e_edson já existe.');
     }
-    
   } catch (error) {
-    console.error('❌ Erro ao criar/atualizar usuário:', error);
+    console.error('❌ Erro ao criar usuário:', error);
   } finally {
     client.release();
   }
 }
 
 // ============================================================
-// CRIAR TABELA PAYMENTS AUTOMATICAMENTE
-// ============================================================
-async function createPaymentsTable() {
-  const client = await pool.connect();
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS payments (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        plan_id INTEGER NOT NULL,
-        credits INTEGER NOT NULL,
-        amount DECIMAL(10,2) NOT NULL,
-        status VARCHAR(50) DEFAULT 'pending',
-        preference_id VARCHAR(100),
-        payment_id VARCHAR(100),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    console.log('✅ Tabela "payments" criada/verificada');
-    
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
-      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
-      CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at);
-    `);
-    console.log('✅ Índices da tabela "payments" criados');
-    
-  } catch (error) {
-    console.error('❌ Erro ao criar tabela payments:', error);
-  } finally {
-    client.release();
-  }
-}
-
-// ============================================================
-// FUNÇÃO PARA RESTAURAR CRÉDITOS (USAR QUANDO PRECISAR)
+// RESTAURAR CRÉDITOS (OPCIONAL)
 // ============================================================
 async function restaurarCreditos() {
   const client = await pool.connect();
   try {
-    const usuario = 'lucille_e_edson';  // ← USUÁRIO QUE VAI RESTAURAR
-    const novosCreditos = 30;            // ← QUANTOS CRÉDITOS
+    const usuario = 'lucille_e_edson';
+    const novosCreditos = 30;
     
     await client.query(
       'UPDATE users SET credits = $1 WHERE email = $2',
@@ -155,16 +103,19 @@ async function restaurarCreditos() {
     await pool.query('SELECT NOW()');
     console.log('✅ Conexão com banco OK');
     
-    // 2. Inicializar tabelas
+    // 2. Inicializar tabelas principais
     await initDatabase();
     
-    // 3. Criar ou atualizar usuário (sempre executa)
-    await criarOuAtualizarUsuario();
+    // 3. Criar tabela payments
+    await createPaymentsTable();
     
-    // 4. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
+    // 4. Criar usuário
+    await criarUsuarioSeNaoExistir();
+    
+    // 5. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
     // await restaurarCreditos();
     
-    // 5. Iniciar servidor
+    // 6. Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
       console.log(`📊 Banco de dados: ${process.env.DATABASE_URL ? 'Conectado' : 'NÃO CONECTADO'}`);
