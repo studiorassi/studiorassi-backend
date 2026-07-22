@@ -9,20 +9,22 @@ const s3 = new AWS.S3({
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
 });
 
-const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
+const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'studio-rassi-ensaios-2026';
 
 // ============================================================
-// ROTA PARA VISUALIZAR IMAGEM (URL ASSINADA)
+// ROTA PARA VISUALIZAR IMAGEM (PROTEGIDA - URL ASSINADA)
 // ============================================================
 router.get('/view/:key', async (req, res) => {
   try {
     const { key } = req.params;
+    const userId = req.userId; // Vem do middleware authenticateToken
+    
+    console.log(`📸 Usuário ${userId} visualizando: ${key}`);
     
     // Gera URL assinada válida por 60 segundos
-    // CORRIGIDO: SEM o prefixo "thumbnails/" - usa a chave diretamente
     const params = {
       Bucket: S3_BUCKET_NAME,
-      Key: key, // AGORA USA A CHAVE DIRETA (ex: ensaio_01.jpg)
+      Key: key,
       Expires: 60
     };
     
@@ -38,21 +40,24 @@ router.get('/view/:key', async (req, res) => {
 });
 
 // ============================================================
-// ROTA PARA DOWNLOAD (COM URL ASSINADA)
+// ROTA PARA DOWNLOAD (PROTEGIDA - URL ASSINADA + DEBITO)
 // ============================================================
 router.post('/download', async (req, res) => {
   try {
     const { imageKeys } = req.body;
+    const userId = req.userId;
     
     if (!imageKeys || !Array.isArray(imageKeys) || imageKeys.length === 0) {
       return res.status(400).json({ error: 'imageKeys é obrigatório' });
     }
     
+    console.log(`📥 Usuário ${userId} baixando: ${imageKeys.join(', ')}`);
+    
     // Gera URLs assinadas para cada imagem
     const urls = imageKeys.map(key => {
       const params = {
         Bucket: S3_BUCKET_NAME,
-        Key: key, // USA A CHAVE DIRETA
+        Key: key,
         Expires: 60
       };
       return {
@@ -70,9 +75,9 @@ router.post('/download', async (req, res) => {
 });
 
 // ============================================================
-// ROTA PARA VERIFICAR SE IMAGEM EXISTE (OPCIONAL)
+// ROTA PARA VERIFICAR SE IMAGEM EXISTE (PROTEGIDA)
 // ============================================================
-router.head('/check/:key', async (req, res) => {
+router.get('/check/:key', async (req, res) => {
   try {
     const { key } = req.params;
     
@@ -82,11 +87,11 @@ router.head('/check/:key', async (req, res) => {
     };
     
     await s3.headObject(params).promise();
-    res.status(200).json({ exists: true });
+    res.json({ exists: true });
     
   } catch (error) {
     if (error.code === 'NotFound') {
-      res.status(404).json({ exists: false });
+      res.json({ exists: false });
     } else {
       console.error('❌ Erro ao verificar imagem:', error);
       res.status(500).json({ error: 'Erro ao verificar imagem' });
