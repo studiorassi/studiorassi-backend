@@ -35,7 +35,11 @@ app.get('/api/health', (req, res) => {
 });
 
 // Error handler
-const { errorHandler } = require('./middlewares/errorHandler');
-app.use(errorHandler);
+app.use((err, req, res, next) => {
+  console.error('❌ Erro:', err);
+  res.status(500).json({ error: 'Erro interno do servidor' });
+});
+
+console.log('✅ Studio Rassi API carregada!');
 
 module.exports = app;
