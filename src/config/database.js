@@ -1,11 +1,10 @@
 // src/config/database.js
 const { Pool } = require('pg');
 
-// Usa a variável de ambiente DATABASE_URL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false // Necessário para conexões SSL no Render
+    rejectUnauthorized: false
   }
 });
 
