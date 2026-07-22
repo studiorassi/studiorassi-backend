@@ -6,7 +6,7 @@ const { initDatabase } = require('./src/config/initDb');
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
-// FUNÇÃO PARA CRIAR TABELA PAYMENTS
+// FUNÇÃO PARA CRIAR TABELA PAYMENTS (CORRIGIDA)
 // ============================================================
 async function createPaymentsTable() {
   const client = await pool.connect();
@@ -29,7 +29,7 @@ async function createPaymentsTable() {
     
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
-      CREATE INDEX IF NOT NULL idx_payments_status ON payments(status);
+      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
       CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at);
     `);
     console.log('✅ Índices da tabela "payments" criados');
@@ -49,7 +49,7 @@ async function createPaymentsTable() {
     await pool.query('SELECT NOW()');
     console.log('✅ Conexão com banco OK');
     
-    await initDatabase(); // <- JÁ CRIA CLIENTE E ADMIN
+    await initDatabase();
     await createPaymentsTable();
     
     app.listen(PORT, () => {
