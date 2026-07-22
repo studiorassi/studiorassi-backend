@@ -7,7 +7,7 @@ async function initDatabase() {
   const client = await pool.connect();
   
   try {
-    // 1. Criar tabela de usuários
+    // Criar tabela de usuários
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -21,7 +21,7 @@ async function initDatabase() {
     `);
     console.log('✅ Tabela "users" criada/verificada');
 
-    // 2. Criar tabela de downloads
+    // Criar tabela de downloads
     await client.query(`
       CREATE TABLE IF NOT EXISTS downloads (
         id SERIAL PRIMARY KEY,
@@ -32,14 +32,13 @@ async function initDatabase() {
     `);
     console.log('✅ Tabela "downloads" criada/verificada');
 
-    // 3. Verificar se já existe usuário admin
+    // Verificar se já existe usuário admin
     const adminCheck = await client.query(
       'SELECT * FROM users WHERE email = $1',
       ['admin@studio.com']
     );
 
     if (adminCheck.rows.length === 0) {
-      // Inserir usuário admin (VOCÊ) - senha: admin123
       await client.query(`
         INSERT INTO users (name, email, password_hash, credits, is_admin) 
         VALUES (
@@ -53,14 +52,13 @@ async function initDatabase() {
       console.log('✅ Usuário admin criado (email: admin@studio.com, senha: admin123)');
     }
 
-    // 4. Verificar se já existe usuário cliente
+    // Verificar se já existe usuário cliente
     const clientCheck = await client.query(
       'SELECT * FROM users WHERE email = $1',
       ['lucille_edson@email.com']
     );
 
     if (clientCheck.rows.length === 0) {
-      // Inserir usuário cliente (Lucille e Edson) - senha: 123456
       await client.query(`
         INSERT INTO users (name, email, password_hash, credits) 
         VALUES (
