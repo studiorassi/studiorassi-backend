@@ -32,26 +32,18 @@ async function initDatabase() {
     `);
     console.log('✅ Tabela "downloads" criada/verificada');
 
-    // ============================================================
-    // 3. DELETAR USUÁRIOS EXISTENTES E RECRIAR
-    // ============================================================
-    console.log('🔧 RECRIANDO USUÁRIOS...');
-    
-    // Remove todos os usuários para garantir
-    await client.query(`DELETE FROM users`);
-    
-    // 4. CRIAR CLIENTE
-    await client.query(`
-      INSERT INTO users (name, email, password_hash, credits, is_admin) 
-      VALUES (
-        'Lucille e Edson', 
-        'lucille_e_edson', 
-        '$2b$10$Q7Z8W9X0Y1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2V3W4X5',
-        30, 
-        false
-      )
-    `);
-    console.log('✅ CLIENTE CRIADO: lucille_e_edson / 072026_l&e (30 créditos)');
+// DELETAR E RECRIAR CLIENTE
+await client.query(`DELETE FROM users WHERE email = 'lucille_e_edson'`);
+await client.query(`
+  INSERT INTO users (name, email, password_hash, credits, is_admin) 
+  VALUES (
+    'Lucille e Edson', 
+    'lucille_e_edson', 
+    '$2b$10$Q7Z8W9X0Y1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2V3W4X5',
+    30, 
+    false
+  )
+`);
 
     // 5. CRIAR ADMIN
     await client.query(`
