@@ -1,7 +1,7 @@
 {
   "name": "studio-rassi-backend",
   "version": "1.0.0",
-  "description": "Backend para Studio Rassi - Galeria de Fotos",
+  "description": "Backend para Studio Rassi - Galeria de Fotos com Pagamentos",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -15,7 +15,8 @@
     "bcrypt": "^5.1.0",
     "pg": "^8.11.0",
     "aws-sdk": "^2.1400.0",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "mercadopago": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
