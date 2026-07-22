@@ -42,7 +42,7 @@ async function createPaymentsTable() {
 }
 
 // ============================================================
-// CRIA USUÁRIO AUTOMATICAMENTE (se não existir)
+// CRIA USUÁRIO CLIENTE (se não existir)
 // ============================================================
 async function criarUsuarioSeNaoExistir() {
   const client = await pool.connect();
@@ -68,6 +68,39 @@ async function criarUsuarioSeNaoExistir() {
     }
   } catch (error) {
     console.error('❌ Erro ao criar usuário:', error);
+  } finally {
+    client.release();
+  }
+}
+
+// ============================================================
+// CRIA USUÁRIO ADMIN (se não existir) - NOVO
+// ============================================================
+async function criarAdminSeNaoExistir() {
+  const client = await pool.connect();
+  try {
+    const check = await client.query(
+      'SELECT * FROM users WHERE email = $1',
+      ['admin@studio.com']
+    );
+    
+    if (check.rows.length === 0) {
+      await client.query(`
+        INSERT INTO users (name, email, password_hash, credits, is_admin) 
+        VALUES (
+          'Admin Studio', 
+          'admin@studio.com', 
+          '$2b$10$P8XkXhF5VxhQwEhk.6kP2.vKH3z3Yh3kq3h3kq3h3kq3h3kq3h3kq3',
+          999, 
+          true
+        )
+      `);
+      console.log('✅ Usuário admin criado! (admin@studio.com / admin123)');
+    } else {
+      console.log('✅ Usuário admin já existe.');
+    }
+  } catch (error) {
+    console.error('❌ Erro ao criar admin:', error);
   } finally {
     client.release();
   }
@@ -109,17 +142,21 @@ async function restaurarCreditos() {
     // 3. Criar tabela payments
     await createPaymentsTable();
     
-    // 4. Criar usuário
+    // 4. Criar usuário cliente
     await criarUsuarioSeNaoExistir();
     
-    // 5. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
+    // 5. Criar usuário admin (NOVO)
+    await criarAdminSeNaoExistir();
+    
+    // 6. [OPCIONAL] Restaurar créditos - Descomente a linha abaixo quando precisar
     // await restaurarCreditos();
     
-    // 6. Iniciar servidor
+    // 7. Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
       console.log(`📊 Banco de dados: ${process.env.DATABASE_URL ? 'Conectado' : 'NÃO CONECTADO'}`);
-      console.log(`👤 Usuário ativo: lucille_e_edson`);
+      console.log(`👤 Cliente: lucille_e_edson`);
+      console.log(`👑 Admin: admin@studio.com / admin123`);
     });
     
   } catch (error) {
