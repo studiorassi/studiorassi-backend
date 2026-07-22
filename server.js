@@ -42,20 +42,17 @@ async function createPaymentsTable() {
 }
 
 // ============================================================
-// FORÇAR CRIAÇÃO DO CLIENTE (RESETA TUDO)
+// CRIA CLIENTE E ADMIN (FORÇADO)
 // ============================================================
-async function forcarCriacaoCliente() {
+async function criarUsuarios() {
   const client = await pool.connect();
   try {
-    console.log('🔧 FORÇANDO criação do cliente...');
+    console.log('🔧 CRIANDO USUÁRIOS...');
     
-    // Remove cliente antigo (se houver)
-    await client.query(
-      'DELETE FROM users WHERE email = $1',
-      ['lucille_e_edson']
-    );
+    // 1. DELETA TUDO para garantir
+    await client.query("DELETE FROM users WHERE email IN ('lucille_e_edson', 'admin@studio.com')");
     
-    // Cria cliente com hash da senha correta
+    // 2. CRIA CLIENTE
     await client.query(`
       INSERT INTO users (name, email, password_hash, credits, is_admin) 
       VALUES (
@@ -66,32 +63,9 @@ async function forcarCriacaoCliente() {
         false
       )
     `);
+    console.log('✅ CLIENTE CRIADO: lucille_e_edson / 072026_l&e (30 créditos)');
     
-    console.log('✅ Cliente CRIADO com sucesso!');
-    console.log('👤 Email: lucille_e_edson');
-    console.log('🔑 Senha: 072026_l&e');
-    console.log('💰 Créditos: 30');
-    
-  } catch (error) {
-    console.error('❌ Erro ao criar cliente:', error);
-  } finally {
-    client.release();
-  }
-}
-
-// ============================================================
-// FORÇAR CRIAÇÃO DO ADMIN
-// ============================================================
-async function forcarCriacaoAdmin() {
-  const client = await pool.connect();
-  try {
-    console.log('🔧 FORÇANDO criação do admin...');
-    
-    await client.query(
-      'DELETE FROM users WHERE email = $1',
-      ['admin@studio.com']
-    );
-    
+    // 3. CRIA ADMIN
     await client.query(`
       INSERT INTO users (name, email, password_hash, credits, is_admin) 
       VALUES (
@@ -102,12 +76,17 @@ async function forcarCriacaoAdmin() {
         true
       )
     `);
+    console.log('✅ ADMIN CRIADO: admin@studio.com / admin123');
     
-    console.log('✅ Admin CRIADO!');
-    console.log('👑 admin@studio.com / admin123');
+    // 4. VERIFICA
+    const users = await client.query('SELECT id, name, email, credits, is_admin FROM users');
+    console.log('📊 USUÁRIOS NO BANCO:');
+    users.rows.forEach(u => {
+      console.log(`   ${u.id}. ${u.name} (${u.email}) - ${u.credits} créditos${u.is_admin ? ' 👑' : ''}`);
+    });
     
   } catch (error) {
-    console.error('❌ Erro ao criar admin:', error);
+    console.error('❌ Erro ao criar usuários:', error);
   } finally {
     client.release();
   }
@@ -123,12 +102,11 @@ async function forcarCriacaoAdmin() {
     
     await initDatabase();
     await createPaymentsTable();
-    await forcarCriacaoCliente(); // <- CRIA O CLIENTE
-    await forcarCriacaoAdmin();   // <- CRIA O ADMIN
+    await criarUsuarios(); // <- CRIA CLIENTE E ADMIN
     
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
-      console.log(`👤 Cliente: lucille_e_edson / 072026_l&e`);
+      console.log(`👤 Cliente: lucille_e_edson / 072026_l&e (30 créditos)`);
       console.log(`👑 Admin: admin@studio.com / admin123`);
     });
     
