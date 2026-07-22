@@ -6,7 +6,6 @@ require('dotenv').config();
 
 const app = express();
 
-// Middlewares
 app.use(helmet());
 app.use(cors({
   origin: ['https://studiorassi.github.io', 'https://api-studiorassi.onrender.com'],
@@ -14,18 +13,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Importar rotas
 const galleryRoutes = require('./routes/gallery');
 const authRoutes = require('./routes/auth');
 const { authenticateToken } = require('./middlewares/auth');
 
-// Rotas públicas
-app.use('/api/auth', authRoutes);
-
-// Rotas protegidas
-app.use('/api/gallery', authenticateToken, galleryRoutes);
-
-// Health check
+// ============================================================
+// ROTAS PÚBLICAS (APENAS HEALTH E LOGIN)
+// ============================================================
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -34,6 +28,12 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ============================================================
+// ROTAS PROTEGIDAS (TODAS AS DEMAIS)
+// ============================================================
+app.use('/api/auth', authRoutes); // login é público, mas as outras rotas são protegidas
+app.use('/api/gallery', authenticateToken, galleryRoutes); // TODAS as rotas da galeria são protegidas
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
@@ -41,5 +41,11 @@ app.use((err, req, res, next) => {
 });
 
 console.log('✅ Studio Rassi API carregada!');
+console.log('📌 Rotas:');
+console.log('  POST /api/auth/login (pública)');
+console.log('  GET  /api/auth/credits (protegida)');
+console.log('  POST /api/auth/debit-credit (protegida)');
+console.log('  GET  /api/gallery/view/:key (protegida)');
+console.log('  POST /api/gallery/download (protegida)');
 
 module.exports = app;
