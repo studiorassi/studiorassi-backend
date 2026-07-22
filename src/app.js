@@ -15,12 +15,12 @@ app.use(express.json());
 
 const galleryRoutes = require('./routes/gallery');
 const authRoutes = require('./routes/auth');
-const paymentRoutes = require('./routes/payment'); // NOVO
+const paymentRoutes = require('./routes/payment');
 const { authenticateToken } = require('./middlewares/auth');
 
 // Rotas públicas
 app.use('/api/auth', authRoutes);
-app.use('/api/payment/webhook', paymentRoutes); // Webhook público
+app.use('/api/payment/webhook', paymentRoutes);
 
 // Rotas protegidas
 app.use('/api/gallery', authenticateToken, galleryRoutes);
@@ -42,8 +42,10 @@ app.use((err, req, res, next) => {
 
 console.log('✅ Studio Rassi API carregada!');
 console.log('📌 Rotas:');
+console.log('  POST /api/auth/login (pública)');
 console.log('  POST /api/payment/create-payment (protegida)');
-console.log('  GET  /api/payment/payment-status/:id (protegida)');
+console.log('  POST /api/payment/confirm-payment (protegida)');
+console.log('  GET  /api/payment/last-payment (protegida)');
 console.log('  POST /api/payment/webhook (pública)');
 
 module.exports = app;
