@@ -2,7 +2,6 @@
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'studio-rassi-secret-key-2026';
 
-// Middleware para verificar token JWT
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -23,7 +22,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Middleware para verificar se é admin
 function requireAdmin(req, res, next) {
   if (!req.isAdmin) {
     return res.status(403).json({ error: 'Acesso negado. Requer privilégios de administrador.' });
