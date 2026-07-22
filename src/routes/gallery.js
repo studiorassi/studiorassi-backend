@@ -11,15 +11,18 @@ const s3 = new AWS.S3({
 
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
 
-// Rota para visualizar thumbnail (com URL assinada)
+// ============================================================
+// ROTA PARA VISUALIZAR IMAGEM (URL ASSINADA)
+// ============================================================
 router.get('/view/:key', async (req, res) => {
   try {
     const { key } = req.params;
     
     // Gera URL assinada válida por 60 segundos
+    // CORRIGIDO: SEM o prefixo "thumbnails/" - usa a chave diretamente
     const params = {
       Bucket: S3_BUCKET_NAME,
-      Key: `thumbnails/${key}`,
+      Key: key, // AGORA USA A CHAVE DIRETA (ex: ensaio_01.jpg)
       Expires: 60
     };
     
@@ -29,12 +32,14 @@ router.get('/view/:key', async (req, res) => {
     res.redirect(url);
     
   } catch (error) {
-    console.error('Erro ao visualizar imagem:', error);
+    console.error('❌ Erro ao visualizar imagem:', error);
     res.status(500).json({ error: 'Erro ao visualizar imagem' });
   }
 });
 
-// Rota para download (com URL assinada)
+// ============================================================
+// ROTA PARA DOWNLOAD (COM URL ASSINADA)
+// ============================================================
 router.post('/download', async (req, res) => {
   try {
     const { imageKeys } = req.body;
@@ -43,10 +48,11 @@ router.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'imageKeys é obrigatório' });
     }
     
+    // Gera URLs assinadas para cada imagem
     const urls = imageKeys.map(key => {
       const params = {
         Bucket: S3_BUCKET_NAME,
-        Key: key, // Usa a chave direta (sem thumbnails/)
+        Key: key, // USA A CHAVE DIRETA
         Expires: 60
       };
       return {
@@ -58,8 +64,33 @@ router.post('/download', async (req, res) => {
     res.json({ urls });
     
   } catch (error) {
-    console.error('Erro no download:', error);
+    console.error('❌ Erro no download:', error);
     res.status(500).json({ error: 'Erro ao gerar URLs de download' });
+  }
+});
+
+// ============================================================
+// ROTA PARA VERIFICAR SE IMAGEM EXISTE (OPCIONAL)
+// ============================================================
+router.head('/check/:key', async (req, res) => {
+  try {
+    const { key } = req.params;
+    
+    const params = {
+      Bucket: S3_BUCKET_NAME,
+      Key: key
+    };
+    
+    await s3.headObject(params).promise();
+    res.status(200).json({ exists: true });
+    
+  } catch (error) {
+    if (error.code === 'NotFound') {
+      res.status(404).json({ exists: false });
+    } else {
+      console.error('❌ Erro ao verificar imagem:', error);
+      res.status(500).json({ error: 'Erro ao verificar imagem' });
+    }
   }
 });
 
