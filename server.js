@@ -14,7 +14,7 @@ async function criarOuAtualizarUsuario() {
     // DADOS DO CLIENTE ATUAL (EDITAR AQUI QUANDO MUDAR)
     // =====================================================
     const usuario = 'lucille_e_edson';        // ← Login do cliente
-    const senhaHash = '$2b$10$Q7Z8W9X0Y1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2V3W4X5'; // ← Hash da senha (072026_l&e)
+    const senhaHash = '$2a$12$OB2EbZYk8qYHu8EzkarXdemxysG4EQCsFcC.JQB3qoZ/PXnHPmUoy'; // ← Hash da senha (072026_l&e)
     const nome = 'Lucille e Edson';           // ← Nome que aparece no site
     const creditos = 30;                      // ← Quantos créditos iniciais
     // =====================================================
