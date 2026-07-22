@@ -1,237 +1,37 @@
-const { GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const sharp = require('sharp');
-const fs = require('fs');
-const path = require('path');
-const { s3Client } = require('../config/aws');
-const axios = require('axios');
+// src/services/s3Service.js
+const AWS = require('aws-sdk');
+
+// Configuração do S3
+const s3 = new AWS.S3({
+  region: process.env.AWS_REGION || 'us-east-1',
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+});
+
+const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'studio-rassi-ensaios-2026';
 
 /**
- * Serviço para interação com Amazon S3
+ * Gera URL assinada para download de imagem do S3
  */
-class S3Service {
-  /**
-   * Busca uma imagem do S3, aplica a logo oficial como marca d'água e redimensiona
-   * A logo ocupa 90% da imagem para proteção contra prints
-   * @param {string} key - Chave da imagem no S3
-   * @param {Object} options - Opções de processamento
-   * @returns {Promise<Buffer>} - Imagem processada
-   */
-  async getWatermarkedImage(key, options = {}) {
-    const {
-      width = 800,
-      height = null,
-      watermarkOpacity = 0.5, // 50% de opacidade
-      logoSize = 0.9,         // 90% da largura da imagem
-    } = options;
-
-    try {
-      // 1. Busca a imagem original do S3
-      const command = new GetObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
+async function generateSignedUrls(keys, expiresIn = 60) {
+  try {
+    const urls = keys.map(key => ({
+      key,
+      url: s3.getSignedUrl('getObject', {
+        Bucket: S3_BUCKET_NAME,
         Key: key,
-      });
-
-      const response = await s3Client.send(command);
-      
-      const chunks = [];
-      for await (const chunk of response.Body) {
-        chunks.push(chunk);
-      }
-      const imageBuffer = Buffer.concat(chunks);
-
-      // 2. Obtém as dimensões da imagem original
-      const metadata = await sharp(imageBuffer).metadata();
-      const originalWidth = metadata.width || 800;
-      const originalHeight = metadata.height || 600;
-
-      // 3. Calcula as dimensões para redimensionamento
-      let resizeWidth = width;
-      let resizeHeight = height;
-
-      if (!resizeHeight && resizeWidth) {
-        const ratio = resizeWidth / originalWidth;
-        resizeHeight = Math.round(originalHeight * ratio);
-      } else if (!resizeWidth && resizeHeight) {
-        const ratio = resizeHeight / originalHeight;
-        resizeWidth = Math.round(originalWidth * ratio);
-      } else if (!resizeWidth && !resizeHeight) {
-        resizeWidth = originalWidth;
-        resizeHeight = originalHeight;
-      }
-
-      // 4. Redimensiona a foto base
-      let sharpInstance = sharp(imageBuffer);
-      sharpInstance = sharpInstance.resize(resizeWidth, resizeHeight, {
-        fit: 'inside',
-        withoutEnlargement: true,
-      });
-
-      // 5. Carrega a logo e aplica ocupando 90% da imagem
-      try {
-        // 🔥 NOVO CAMINHO: logo_branco.png
-        const logoUrl = 'https://studiorassi.github.io/home/assets/images/logo/logo_branco.png';
-        
-        // Baixa a logo da URL
-        const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer' });
-        const logoBuffer = Buffer.from(logoResponse.data);
-
-        // Calcula o tamanho da logo: 90% da largura da imagem
-        const logoWidth = Math.round(resizeWidth * logoSize);
-        const logoHeight = Math.round(resizeHeight * 0.3);
-
-        // Redimensiona a logo mantendo a proporção
-        const resizedLogo = await sharp(logoBuffer)
-          .resize({
-            width: logoWidth,
-            height: logoHeight,
-            fit: 'contain',
-            background: { r: 0, g: 0, b: 0, alpha: 0 },
-          })
-          .ensureAlpha()
-          .toBuffer();
-
-        // Aplica a logo no centro da imagem
-        sharpInstance = sharpInstance.composite([
-          {
-            input: resizedLogo,
-            gravity: 'center',
-            blend: 'over',
-            opacity: watermarkOpacity,
-          },
-        ]);
-
-        console.log(`✅ Logo branca aplicada com sucesso: ${logoWidth}x${logoHeight} (${Math.round(logoSize * 100)}% da imagem)`);
-
-      } catch (logoError) {
-        console.warn('⚠️ Não foi possível carregar a logo da URL:', logoError.message);
-        
-        // Fallback: tenta carregar do caminho local
-        try {
-          // 🔥 NOVO CAMINHO LOCAL: logo_branco.png
-          const logoPath = path.join(__dirname, '../..', 'assets', 'images', 'logo', 'logo_branco.png');
-          
-          if (fs.existsSync(logoPath)) {
-            const logoBuffer = fs.readFileSync(logoPath);
-            
-            const logoWidth = Math.round(resizeWidth * logoSize);
-            const logoHeight = Math.round(resizeHeight * 0.3);
-
-            const resizedLogo = await sharp(logoBuffer)
-              .resize({
-                width: logoWidth,
-                height: logoHeight,
-                fit: 'contain',
-                background: { r: 0, g: 0, b: 0, alpha: 0 },
-              })
-              .ensureAlpha()
-              .toBuffer();
-
-            sharpInstance = sharpInstance.composite([
-              {
-                input: resizedLogo,
-                gravity: 'center',
-                blend: 'over',
-                opacity: watermarkOpacity,
-              },
-            ]);
-            
-            console.log(`✅ Logo branca aplicada (fallback local): ${logoWidth}x${logoHeight}`);
-          } else {
-            console.warn('⚠️ Logo branca não encontrada em nenhum local, prosseguindo sem marca d\'água.');
-          }
-        } catch (localError) {
-          console.warn('⚠️ Erro ao carregar logo local:', localError.message);
-        }
-      }
-
-      // 6. Converte para WebP comprimido
-      const processedBuffer = await sharpInstance
-        .webp({
-          quality: 50,
-          effort: 3,
-          lossless: false,
-        })
-        .toBuffer();
-
-      return processedBuffer;
-    } catch (error) {
-      console.error('❌ Erro ao processar imagem:', error.message);
-      
-      // Fallback: se falhar, retorna a imagem redimensionada limpa
-      try {
-        console.warn('⚠️ Tentando retornar imagem sem watermark...');
-        const fallbackCommand = new GetObjectCommand({
-          Bucket: process.env.S3_BUCKET_NAME,
-          Key: key,
-        });
-        const fallbackResponse = await s3Client.send(fallbackCommand);
-        const fallbackChunks = [];
-        for await (const chunk of fallbackResponse.Body) {
-          fallbackChunks.push(chunk);
-        }
-        const fallbackBuffer = Buffer.concat(fallbackChunks);
-        
-        return await sharp(fallbackBuffer)
-          .resize(width, height, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 50 })
-          .toBuffer();
-      } catch (fallbackError) {
-        throw error;
-      }
-    }
-  }
-
-  /**
-   * Gera URLs pré-assinadas para download de alta resolução
-   */
-  async generatePresignedUrls(keys, expiresIn = 300) {
-    try {
-      const results = await Promise.all(
-        keys.map(async (key) => {
-          const command = new GetObjectCommand({
-            Bucket: process.env.S3_BUCKET_NAME,
-            Key: key,
-          });
-
-          const url = await getSignedUrl(s3Client, command, {
-            expiresIn,
-          });
-
-          return {
-            key,
-            url,
-            expiresIn,
-          };
-        })
-      );
-
-      return results;
-    } catch (error) {
-      console.error('❌ Erro ao gerar URLs pré-assinadas:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Verifica se uma imagem existe no S3
-   */
-  async imageExists(key) {
-    try {
-      const command = new GetObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
-        Key: key,
-      });
-
-      await s3Client.send(command);
-      return true;
-    } catch (error) {
-      if (error.name === 'NoSuchKey') {
-        return false;
-      }
-      throw error;
-    }
+        Expires: expiresIn
+      })
+    }));
+    
+    return urls;
+    
+  } catch (error) {
+    console.error('Erro ao gerar URLs assinadas:', error);
+    throw new Error('Erro ao gerar URLs de download');
   }
 }
 
-module.exports = new S3Service();
+module.exports = {
+  generateSignedUrls
+};
