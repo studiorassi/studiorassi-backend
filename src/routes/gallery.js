@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const s3Service = require('../services/s3Service');
-const { authMiddleware } = require('../middlewares/auth');
 const { CLIENTES, creditosAtuais } = require('../config/clientes');
 
-// VISUALIZAR MINIATURA COM MARCA D'ÁGUA (Pública, ultra-rápida)
+const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
+
+// ============================================================
+// ROTA: Visualizar miniatura com marca d'água (Pública)
+// ============================================================
 router.get('/view/:imageKey', async (req, res) => {
   try {
     const { imageKey } = req.params;
@@ -22,12 +26,28 @@ router.get('/view/:imageKey', async (req, res) => {
   }
 });
 
-// BAIXAR ARQUIVO ORIGINAL (Desconta crédito)
-router.post('/download', authMiddleware, async (req, res) => {
+// ============================================================
+// ROTA: Baixar arquivo original em alta (Desconta crédito)
+// ============================================================
+router.post('/download', async (req, res) => {
   try {
-    const { imageKeys } = req.body;
-    const username = req.user.username || req.user.email;
+    // 1. Validação Direta do Token (Sem depender de arquivos externos)
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ success: false, message: 'Acesso negado' });
 
+    const token = authHeader.split(' ')[1];
+    let username;
+    
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      username = decoded.username || decoded.email;
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'Token inválido ou expirado' });
+    }
+
+    const { imageKeys } = req.body;
+
+    // 2. Verifica se o cliente existe no sistema simplificado
     if (!CLIENTES[username]) {
       return res.status(401).json({ success: false, message: 'Cliente não encontrado no sistema.' });
     }
@@ -39,14 +59,15 @@ router.post('/download', authMiddleware, async (req, res) => {
     const availableCredits = creditosAtuais.get(username);
     const requiredCredits = imageKeys.length;
 
+    // 3. Verifica se tem saldo
     if (availableCredits < requiredCredits) {
       return res.status(402).json({ success: false, message: 'Créditos insuficientes' });
     }
 
-    // Desconta o crédito e salva
+    // 4. Desconta o crédito em memória
     creditosAtuais.set(username, availableCredits - requiredCredits);
 
-    // Pega o link seguro da AWS
+    // 5. Busca o link limpo e seguro direto da AWS S3
     const signedUrlsData = await s3Service.generatePresignedUrls(imageKeys, 300);
     const urls = signedUrlsData.map(item => item.url);
 
