@@ -97,21 +97,22 @@ app.post('/api/auth/debit-credit', async (req, res) => {
   }
 });
 
+// ============================================================
+// 4. ROTA DE VISUALIZAÇÃO UNIVERSAL (Acessível por qualquer navegador/celular)
+// ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
   try {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 259200
+      Expires: 259200 // 72 horas
     };
+
+    // Gera a URL assinada diretamente e redireciona o navegador para o S3
     const url = s3.getSignedUrl('getObject', params);
-    return res.json({
-      success: true,
-      url: url,
-      imageUrl: url,
-      link: url
-    });
+    return res.redirect(url);
+
   } catch (error) {
     console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
