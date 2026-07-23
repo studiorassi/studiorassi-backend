@@ -7,22 +7,28 @@ const { CLIENTES, creditosAtuais } = require('../config/clientes');
 const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
 
 // ============================================================
-// ROTA: Visualizar fotos na vitrine (Redirecionamento Rápido)
+// ROTA: Retornar o link seguro da foto em JSON (Evita bloqueio de CORS/Redirect)
+// GET /api/gallery/view/:imageKey
 // ============================================================
 router.get('/view/:imageKey', async (req, res) => {
   try {
     const { imageKey } = req.params;
 
-    // Em vez de baixar e processar a foto estourando a memória do Render,
-    // geramos um link temporário seguro direto da AWS que dura 1 hora.
+    // Gera um link pré-assinado válido por 1 hora direto da AWS S3
     const signedUrlsData = await s3Service.generatePresignedUrls([imageKey], 3600);
     
-    // O servidor diz para o navegador: "A foto está neste link seguro da AWS!"
-    res.redirect(signedUrlsData[0].url);
+    if (!signedUrlsData || signedUrlsData.length === 0) {
+      return res.status(404).json({ success: false, message: 'Imagem não encontrada' });
+    }
+
+    res.json({
+      success: true,
+      url: signedUrlsData[0].url
+    });
 
   } catch (error) {
-    console.error(`❌ Erro ao buscar imagem ${req.params.imageKey}:`, error.message);
-    res.status(500).send('Erro de conexão com a Amazon S3');
+    console.error(`❌ Erro ao gerar link para a foto ${req.params.imageKey}:`, error.message);
+    res.status(500).json({ success: false, message: 'Erro ao gerar link da imagem' });
   }
 });
 
@@ -63,7 +69,6 @@ router.post('/download', async (req, res) => {
 
     creditosAtuais.set(username, availableCredits - requiredCredits);
 
-    // Link para o download limpo da AWS
     const signedUrlsData = await s3Service.generatePresignedUrls(imageKeys, 300);
     const urls = signedUrlsData.map(item => item.url);
 
