@@ -1,65 +1,45 @@
-// src/routes/gallery.js
-const express = require('express');
-const router = express.Router();
-const AWS = require('aws-sdk');
+// Exemplo de trecho essencial dentro da rota de download no seu back-end:
+const { creditosAtuais, CLIENTES } = require('../config/clientes');
 
-const s3 = new AWS.S3({
-  region: process.env.AWS_REGION || 'us-east-1',
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-});
-
-const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'studio-rassi-ensaios-2026';
-
-// ROTA PARA VISUALIZAR IMAGEM (Retorna a URL assinada em JSON)
-router.get('/view/:key', async (req, res) => {
+router.post('/download', verifyToken, async (req, res) => {
   try {
-    const { key } = req.params;
-    
-    const params = {
-      Bucket: S3_BUCKET_NAME,
-      Key: key,
-      Expires: 300 // Válido por 5 minutos
-    };
-    
-    const url = s3.getSignedUrl('getObject', params);
-    
-    // Retorna a URL limpa em JSON para o front-end renderizar
-    res.json({ success: true, url });
-    
-  } catch (error) {
-    console.error('❌ Erro ao gerar link da imagem:', error);
-    res.status(500).json({ success: false, error: 'Erro ao gerar link' });
-  }
-});
-
-// ROTA PARA DOWNLOAD DA IMAGEM ORIGINAL
-router.post('/download', async (req, res) => {
-  try {
+    const username = req.user.username || req.user.email;
     const { imageKeys } = req.body;
-    
-    if (!imageKeys || !Array.isArray(imageKeys) || imageKeys.length === 0) {
-      return res.status(400).json({ error: 'imageKeys é obrigatório' });
+
+    // Inicializa o saldo se não existir na memória do servidor
+    if (!creditosAtuais.has(username)) {
+      const inicial = CLIENTES[username] ? CLIENTES[username].creditosIniciais : 30;
+      creditosAtuais.set(username, inicial);
     }
-    
-    const urls = imageKeys.map(key => {
-      const params = {
-        Bucket: S3_BUCKET_NAME,
-        Key: key, 
-        Expires: 60 
-      };
-      return {
-        key,
-        url: s3.getSignedUrl('getObject', params)
-      };
+
+    const saldoAtual = creditosAtuais.get(username);
+    const quantidadeDesejada = imageKeys.length;
+
+    // Trava de segurança: impede baixar mais do que o saldo permite
+    if (saldoAtual < quantidadeDesejada) {
+      return res.status(402).json({ 
+        success: false, 
+        message: 'Créditos insuficientes para realizar o download.' 
+      });
+    }
+
+    // Desconta os créditos no servidor
+    const novoSaldo = saldoAtual - quantidadeDesejada;
+    creditosAtuais.set(username, novoSaldo);
+
+    // Gera os links assinados da AWS para download...
+    // (Mantenha a lógica de geração de URLs do S3 que você já tem aqui)
+
+    res.json({
+      success: true,
+      data: {
+        creditsRemaining: novoSaldo
+      },
+      urls: [...] // Seus links gerados
     });
-    
-    res.json({ urls });
-    
+
   } catch (error) {
-    console.error('❌ Erro no download:', error);
-    res.status(500).json({ error: 'Erro ao gerar URLs de download' });
+    console.error('Erro no download:', error);
+    res.status(500).json({ success: false, message: 'Erro ao processar download' });
   }
 });
-
-module.exports = router;
