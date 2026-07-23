@@ -13,7 +13,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configuração oficial do AWS S3
+// Configuração oficial do AWS S3 utilizando as variáveis de ambiente do Render
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -44,6 +44,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
 
+    console.log(`✅ Login aprovado para: ${user.email}`);
+
     return res.json({
       success: true,
       token: token,
@@ -61,7 +63,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Função auxiliar para buscar usuário com fallback seguro
+// Função auxiliar de segurança para buscar o usuário (com fallback para evitar crash de créditos)
 const getUserByRequest = async (req) => {
   try {
     const authHeader = req.headers.authorization;
@@ -88,6 +90,7 @@ app.get('/api/auth/credits', async (req, res) => {
 
     return res.json({ success: true, credits: user.credits });
   } catch (error) {
+    console.error('❌ Erro ao buscar créditos:', error);
     return res.status(500).json({ success: false, message: 'Erro no servidor.' });
   }
 });
@@ -96,6 +99,8 @@ app.get('/api/auth/credits', async (req, res) => {
 // 3. ROTA PARA DEBITAR CRÉDITO
 // ============================================================
 app.post('/api/auth/debit-credit', async (req, res) => {
+  const { imageKey } = req.body;
+
   try {
     const user = await getUserByRequest(req);
     if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
@@ -107,18 +112,21 @@ app.post('/api/auth/debit-credit', async (req, res) => {
     const newCredits = user.credits - 1;
     const updateResult = await pool.query('UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;', [newCredits, user.id]);
 
+    console.log(`💳 Crédito debitado para a foto [${imageKey || 'desconhecida'}]. Restantes: ${newCredits}`);
+
     return res.json({
       success: true,
       message: 'Crédito debitado com sucesso.',
       credits: updateResult.rows[0].credits
     });
   } catch (error) {
+    console.error('❌ Erro ao debitar crédito:', error);
     return res.status(500).json({ success: false, message: 'Erro ao processar o débito.' });
   }
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Retorna JSON com a URL assinada para o front-end)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Compatibilidade total com o front-end)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -127,15 +135,17 @@ app.get('/api/gallery/view/:filename', (req, res) => {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 259200 // 72 horas
+      Expires: 259200 // Sincronizado com o cronômetro de 72 horas
     };
 
     const url = s3.getSignedUrl('getObject', params);
     
-    // O front-end espera um JSON com a url da imagem
+    // Retorna todas as variações de chaves possíveis para garantir que o front-end mapeie o link
     return res.json({
       success: true,
-      url: url
+      url: url,
+      imageUrl: url,
+      link: url
     });
   } catch (error) {
     console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
