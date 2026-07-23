@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const AWS = require('aws-sdk');
 const { pool } = require('./src/config/database');
 
 const app = express();
@@ -11,6 +12,15 @@ app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
+
+// Configuração do AWS S3
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION
+});
+
+const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 
 // ============================================================
 // 1. ROTA DE LOGIN DO CLIENTE
@@ -115,32 +125,24 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA TEMPORÁRIA DE RESET DE CRÉDITOS
+// 4. ROTA PARA EXIBIR/BUSCAR IMAGENS DO AWS S3
 // ============================================================
-app.get('/resetar-meus-creditos-agora', async (req, res) => {
-  try {
-    const query = 'UPDATE users SET credits = 30 WHERE email = $1 RETURNING *;';
-    const result = await pool.query(query, ['lucille_e_edson']);
+app.get('/api/gallery/view/:filename', async (req, res) => {
+  const filename = req.params.filename;
 
-    if (result.rows.length > 0) {
-      res.send(`
-        <div style="font-family: sans-serif; padding: 40px; text-align: center;">
-          <h1 style="color: #4CAF50;">✅ Sucesso!</h1>
-          <p style="font-size: 1.2rem;">Créditos resetados para <strong>30</strong> para a conta <strong>${result.rows[0].email}</strong>.</p>
-          <p><a href="javascript:history.back()">← Voltar e atualizar a página da galeria</a></p>
-        </div>
-      `);
-    } else {
-      res.send(`
-        <div style="font-family: sans-serif; padding: 40px; text-align: center;">
-          <h1 style="color: #f44336;">⚠️ Usuário não encontrado</h1>
-          <p>Nenhum registro com o identificador <strong>lucille_e_edson</strong> foi encontrado na coluna 'email'.</p>
-        </div>
-      `);
-    }
-  } catch (err) {
-    console.error('❌ Erro no reset:', err);
-    res.status(500).send('❌ Erro no banco de dados: ' + err.message);
+  try {
+    const params = {
+      Bucket: BUCKET_NAME,
+      Key: filename,
+      Expires: 300 // URL assinada válida por 5 minutos
+    };
+
+    const url = s3.getSignedUrl('getObject', params);
+    return res.redirect(url);
+
+  } catch (error) {
+    console.error(`❌ Erro ao buscar imagem [${filename}] no S3:`, error);
+    return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
   }
 });
 
