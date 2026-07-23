@@ -6,17 +6,14 @@ const { authMiddleware } = require('../middlewares/auth');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
 
-// LOGIN BLINDADO (Aceita qualquer nome de campo do HTML)
+// LOGIN BLINDADO
 router.post('/login', (req, res) => {
-  // Pega o que o HTML mandar, seja 'username', 'login' ou 'email'
   const usuarioDigitado = req.body.username || req.body.login || req.body.email;
   const senhaDigitada = req.body.password || req.body.senha;
 
-  // Imprime no painel do Render para você descobrir o que está chegando
   console.log(`🕵️ TENTATIVA DE LOGIN: Usuário [${usuarioDigitado}] | Senha [${senhaDigitada}]`);
 
   if (!usuarioDigitado || !senhaDigitada) {
-    console.log('❌ Falha: O HTML não enviou os dados corretamente para a API.');
     return res.status(400).json({ success: false, message: 'Usuário e senha são obrigatórios' });
   }
 
