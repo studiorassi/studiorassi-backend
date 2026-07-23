@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { CLIENTES, creditosAtuais } = require('../config/clientes');
-const { authMiddleware } = require('../middlewares/auth');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
 
@@ -20,6 +19,7 @@ router.post('/login', (req, res) => {
   const cliente = CLIENTES[usuarioDigitado];
 
   if (cliente && cliente.senha === senhaDigitada) {
+    // Garante que o cliente tenha saldo
     if (!creditosAtuais.has(usuarioDigitado)) {
       creditosAtuais.set(usuarioDigitado, cliente.creditosIniciais);
     }
@@ -42,15 +42,28 @@ router.post('/login', (req, res) => {
   return res.status(401).json({ success: false, message: 'Usuário ou senha inválidos' });
 });
 
-// CONSULTAR CRÉDITOS
-router.get('/credits', authMiddleware, (req, res) => {
-  const username = req.user.username || req.user.email; 
-  
-  const credits = creditosAtuais.has(username) 
-    ? creditosAtuais.get(username) 
-    : (CLIENTES[username] ? CLIENTES[username].creditosIniciais : 0);
+// CONSULTAR CRÉDITOS (Com verificação blindada integrada)
+router.get('/credits', (req, res) => {
+  try {
+    // Pega o token do cabeçalho
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ success: false, message: 'Acesso negado' });
 
-  res.json({ success: true, data: { credits } });
+    const token = authHeader.split(' ')[1];
+    
+    // Verifica se o token é válido
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const username = decoded.username || decoded.email; 
+    
+    const credits = creditosAtuais.has(username) 
+      ? creditosAtuais.get(username) 
+      : (CLIENTES[username] ? CLIENTES[username].creditosIniciais : 0);
+
+    res.json({ success: true, data: { credits } });
+  } catch (err) {
+    console.error('❌ Erro na verificação do token:', err.message);
+    return res.status(401).json({ success: false, message: 'Token inválido ou expirado' });
+  }
 });
 
 module.exports = router;
