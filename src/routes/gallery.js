@@ -5,7 +5,33 @@ const { creditosAtuais, CLIENTES } = require('../config/clientes');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
 
-// Rota de download validada pelo servidor
+// ============================================================
+// 1. ROTA DE VISUALIZAÇÃO DAS FOTOS NA GALERIA
+// ============================================================
+router.get('/view/:key', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ success: false, message: 'Acesso negado' });
+
+    const token = authHeader.split(' ')[1];
+    jwt.verify(token, JWT_SECRET);
+
+    const photoKey = req.params.key;
+
+    // Substitua abaixo pela sua lógica real da AWS S3 (caso utilize AWS SDK v2 ou v3 para gerar URL assinada)
+    // Se as imagens forem públicas no seu bucket, mantenha a URL direta:
+    const imageUrl = `https://seu-bucket.s3.amazonaws.com/${photoKey}`;
+
+    return res.json({ success: true, url: imageUrl });
+  } catch (error) {
+    console.error('❌ Erro ao buscar foto para visualização:', error);
+    return res.status(500).json({ success: false, message: 'Erro ao carregar foto' });
+  }
+});
+
+// ============================================================
+// 2. ROTA DE DOWNLOAD VALIDADA PELO SERVIDOR
+// ============================================================
 router.post('/download', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -38,7 +64,7 @@ router.post('/download', async (req, res) => {
     const novoSaldo = saldoAtual - custoDesejado;
     creditosAtuais.set(username, novoSaldo);
 
-    // Mantenha aqui a sua lógica de integração com a AWS S3 para gerar os links assinados
+    // Gera os links para download das imagens solicitadas
     const urls = imageKeys.map(key => ({
       key: key,
       url: `https://seu-bucket.s3.amazonaws.com/${key}` // Ajuste conforme sua função do S3
