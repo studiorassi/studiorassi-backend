@@ -126,7 +126,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Compatibilidade total com o front-end)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Compatibilidade Universal)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -135,18 +135,25 @@ app.get('/api/gallery/view/:filename', (req, res) => {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 259200 // Sincronizado com o cronômetro de 72 horas
+      Expires: 259200 // 72 horas
     };
 
     const url = s3.getSignedUrl('getObject', params);
-    
-    // Retorna todas as variações de chaves possíveis para garantir que o front-end mapeie o link
-    return res.json({
-      success: true,
-      url: url,
-      imageUrl: url,
-      link: url
-    });
+
+    // Verifica se o front-end pediu JSON ou se espera redirecionamento direto
+    const acceptHeader = req.headers.accept || '';
+    if (acceptHeader.includes('application/json')) {
+      return res.json({
+        success: true,
+        url: url,
+        imageUrl: url,
+        link: url
+      });
+    }
+
+    // Caso contrário, redireciona o navegador para a imagem assinada do S3
+    return res.redirect(url);
+
   } catch (error) {
     console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
