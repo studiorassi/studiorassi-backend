@@ -13,7 +13,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configuração oficial do AWS S3 utilizando as variáveis de ambiente do Render
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -22,30 +21,19 @@ const s3 = new AWS.S3({
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 
-// ============================================================
-// 1. ROTA DE LOGIN DO CLIENTE
-// ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
-
   try {
     const query = 'SELECT * FROM users WHERE email = $1;';
     const result = await pool.query(query, [email]);
-
     if (result.rows.length === 0) {
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
     }
-
     const user = result.rows[0];
-
     if (user.password !== password) {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
-
     const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
-
-    console.log(`✅ Login aprovado para: ${user.email}`);
-
     return res.json({
       success: true,
       token: token,
@@ -56,14 +44,12 @@ app.post('/api/auth/login', async (req, res) => {
         credits: user.credits
       }
     });
-
   } catch (error) {
     console.error('❌ Erro no login:', error);
     return res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
   }
 });
 
-// Função auxiliar de segurança para buscar o usuário (com fallback para evitar crash de créditos)
 const getUserByRequest = async (req) => {
   try {
     const authHeader = req.headers.authorization;
@@ -75,19 +61,14 @@ const getUserByRequest = async (req) => {
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
   } catch (e) {}
-
   const fallbackRes = await pool.query('SELECT * FROM users LIMIT 1;');
   return fallbackRes.rows.length > 0 ? fallbackRes.rows[0] : null;
 };
 
-// ============================================================
-// 2. ROTA PARA CONSULTAR CRÉDITOS
-// ============================================================
 app.get('/api/auth/credits', async (req, res) => {
   try {
     const user = await getUserByRequest(req);
     if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-
     return res.json({ success: true, credits: user.credits });
   } catch (error) {
     console.error('❌ Erro ao buscar créditos:', error);
@@ -95,25 +76,16 @@ app.get('/api/auth/credits', async (req, res) => {
   }
 });
 
-// ============================================================
-// 3. ROTA PARA DEBITAR CRÉDITO
-// ============================================================
 app.post('/api/auth/debit-credit', async (req, res) => {
   const { imageKey } = req.body;
-
   try {
     const user = await getUserByRequest(req);
     if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-
     if (user.credits <= 0) {
       return res.status(400).json({ success: false, message: 'Saldo de créditos insuficiente.' });
     }
-
     const newCredits = user.credits - 1;
     const updateResult = await pool.query('UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;', [newCredits, user.id]);
-
-    console.log(`💳 Crédito debitado para a foto [${imageKey || 'desconhecida'}]. Restantes: ${newCredits}`);
-
     return res.json({
       success: true,
       message: 'Crédito debitado com sucesso.',
@@ -125,38 +97,27 @@ app.post('/api/auth/debit-credit', async (req, res) => {
   }
 });
 
-// ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Retorna JSON com a URL assinada)
-// ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
-
   try {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 259200 // 72 horas
+      Expires: 259200
     };
-
     const url = s3.getSignedUrl('getObject', params);
-
-    // Retorna o JSON estruturado que o cliente.html espera ler em 'json.url'
     return res.json({
       success: true,
       url: url,
       imageUrl: url,
       link: url
     });
-
   } catch (error) {
     console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
   }
 });
 
-// ============================================================
-// 5. INICIALIZAÇÃO DO SERVIDOR
-// ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
