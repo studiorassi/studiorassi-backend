@@ -132,15 +132,12 @@ app.get('/api/gallery/view/:filename', (req, res) => {
 
   try {
     const params = {
-      Bucket: BUCKET_NAME,
+      Bucket: 'studio-rassi-ensaios-2026', // Nome exato do bucket fixado aqui
       Key: filename,
       Expires: 300 // URL válida por 5 minutos
     };
 
-    // Gera a URL assinada idêntica àquela que você testou e abriu com sucesso
     const url = s3.getSignedUrl('getObject', params);
-    
-    // Redireciona o navegador do cliente para a imagem com segurança
     return res.redirect(url);
 
   } catch (error) {
