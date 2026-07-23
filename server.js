@@ -61,7 +61,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Função auxiliar para buscar usuário (com fallback seguro para não zerar créditos)
+// Função auxiliar para buscar usuário com fallback seguro
 const getUserByRequest = async (req) => {
   try {
     const authHeader = req.headers.authorization;
@@ -118,7 +118,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Validade de 72 horas)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Retorna JSON com a URL assinada para o front-end)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -127,14 +127,18 @@ app.get('/api/gallery/view/:filename', (req, res) => {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 259200 // Validade sincronizada com o cronômetro de 72 horas (259200 segundos)
+      Expires: 259200 // 72 horas
     };
 
     const url = s3.getSignedUrl('getObject', params);
-    console.log(`🖼️ Gerando link S3 válido por 72h para: ${filename}`);
-    return res.redirect(url);
+    
+    // O front-end espera um JSON com a url da imagem
+    return res.json({
+      success: true,
+      url: url
+    });
   } catch (error) {
-    console.error(`❌ Erro ao buscar imagem [${filename}] no S3:`, error);
+    console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
   }
 });
