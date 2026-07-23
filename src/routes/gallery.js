@@ -7,22 +7,22 @@ const { CLIENTES, creditosAtuais } = require('../config/clientes');
 const JWT_SECRET = process.env.JWT_SECRET || 'studiorassi_secret_key_2026';
 
 // ============================================================
-// ROTA: Visualizar miniatura com marca d'água (Pública)
+// ROTA: Visualizar fotos na vitrine (Redirecionamento Rápido)
 // ============================================================
 router.get('/view/:imageKey', async (req, res) => {
   try {
     const { imageKey } = req.params;
-    const { width } = req.query;
 
-    const processedImage = await s3Service.getWatermarkedImage(imageKey, {
-      width: width ? parseInt(width) : 400
-    });
+    // Em vez de baixar e processar a foto estourando a memória do Render,
+    // geramos um link temporário seguro direto da AWS que dura 1 hora.
+    const signedUrlsData = await s3Service.generatePresignedUrls([imageKey], 3600);
+    
+    // O servidor diz para o navegador: "A foto está neste link seguro da AWS!"
+    res.redirect(signedUrlsData[0].url);
 
-    res.set('Content-Type', 'image/webp');
-    res.set('Cache-Control', 'public, max-age=3600');
-    res.send(processedImage);
   } catch (error) {
-    res.status(500).send('Erro ao carregar miniatura');
+    console.error(`❌ Erro ao buscar imagem ${req.params.imageKey}:`, error.message);
+    res.status(500).send('Erro de conexão com a Amazon S3');
   }
 });
 
@@ -31,7 +31,6 @@ router.get('/view/:imageKey', async (req, res) => {
 // ============================================================
 router.post('/download', async (req, res) => {
   try {
-    // 1. Validação Direta do Token (Sem depender de arquivos externos)
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ success: false, message: 'Acesso negado' });
 
@@ -47,7 +46,6 @@ router.post('/download', async (req, res) => {
 
     const { imageKeys } = req.body;
 
-    // 2. Verifica se o cliente existe no sistema simplificado
     if (!CLIENTES[username]) {
       return res.status(401).json({ success: false, message: 'Cliente não encontrado no sistema.' });
     }
@@ -59,15 +57,13 @@ router.post('/download', async (req, res) => {
     const availableCredits = creditosAtuais.get(username);
     const requiredCredits = imageKeys.length;
 
-    // 3. Verifica se tem saldo
     if (availableCredits < requiredCredits) {
       return res.status(402).json({ success: false, message: 'Créditos insuficientes' });
     }
 
-    // 4. Desconta o crédito em memória
     creditosAtuais.set(username, availableCredits - requiredCredits);
 
-    // 5. Busca o link limpo e seguro direto da AWS S3
+    // Link para o download limpo da AWS
     const signedUrlsData = await s3Service.generatePresignedUrls(imageKeys, 300);
     const urls = signedUrlsData.map(item => item.url);
 
