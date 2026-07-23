@@ -1,17 +1,12 @@
 const express = require('express');
 const cors = require('cors');
-// Importa o pool de conexão do PostgreSQL
 const { pool } = require('./src/config/database');
 
 const app = express();
 
-// ============================================================
-// MIDDLEWARES BASE
-// ============================================================
 app.use(cors());
 app.use(express.json());
 
-// Logger simples para monitorar requisições no console do Render
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -24,8 +19,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // Busca o usuário no banco PostgreSQL por e-mail ou nome de usuário
-    const query = 'SELECT * FROM users WHERE email = $1 OR username = $1;';
+    const query = 'SELECT * FROM users WHERE email = $1;';
     const result = await pool.query(query, [email]);
 
     if (result.rows.length === 0) {
@@ -34,12 +28,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = result.rows[0];
 
-    // Validação de senha simples (ou hash dependendo da sua estrutura)
     if (user.password !== password) {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
 
-    // Token simulado/JWT simples para manter a sessão do cliente
     const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
 
     console.log(`✅ Login aprovado para: ${user.email}`);
@@ -66,8 +58,7 @@ app.post('/api/auth/login', async (req, res) => {
 // ============================================================
 app.get('/api/auth/credits', async (req, res) => {
   try {
-    // Busca o saldo do cliente padrão de teste (ou pelo token)
-    const query = 'SELECT credits FROM users WHERE email = $1 OR username = $1;';
+    const query = 'SELECT credits FROM users WHERE email = $1;';
     const result = await pool.query(query, ['lucille_e_edson']);
 
     if (result.rows.length === 0) {
@@ -92,8 +83,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
   const { imageKey } = req.body;
 
   try {
-    // 1. Busca os créditos atuais do usuário
-    const userQuery = 'SELECT id, credits FROM users WHERE email = $1 OR username = $1;';
+    const userQuery = 'SELECT id, credits FROM users WHERE email = $1;';
     const userResult = await pool.query(userQuery, ['lucille_e_edson']);
 
     if (userResult.rows.length === 0) {
@@ -106,7 +96,6 @@ app.post('/api/auth/debit-credit', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Saldo de créditos insuficiente.' });
     }
 
-    // 2. Debita 1 crédito no PostgreSQL
     const newCredits = currentCredits - 1;
     const updateQuery = 'UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;';
     const updateResult = await pool.query(updateQuery, [newCredits, userResult.rows[0].id]);
@@ -126,24 +115,18 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA TEMPORÁRIA DE RESET DE CRÉDITOS (RECURSO DE TESTES)
+// 4. ROTA TEMPORÁRIA DE RESET DE CRÉDITOS
 // ============================================================
 app.get('/resetar-meus-creditos-agora', async (req, res) => {
   try {
-    // Atualiza o saldo para 30 buscando por e-mail ou por nome de usuário (username)
-    const query = `
-      UPDATE users 
-      SET credits = 30 
-      WHERE email = 'lucille_e_edson' OR username = 'lucille_e_edson' 
-      RETURNING *;
-    `;
-    const result = await pool.query(query);
+    const query = 'UPDATE users SET credits = 30 WHERE email = $1 RETURNING *;';
+    const result = await pool.query(query, ['lucille_e_edson']);
 
     if (result.rows.length > 0) {
       res.send(`
         <div style="font-family: sans-serif; padding: 40px; text-align: center;">
           <h1 style="color: #4CAF50;">✅ Sucesso!</h1>
-          <p style="font-size: 1.2rem;">Créditos resetados para <strong>30</strong> para a conta <strong>${result.rows[0].email || result.rows[0].username}</strong>.</p>
+          <p style="font-size: 1.2rem;">Créditos resetados para <strong>30</strong> para a conta <strong>${result.rows[0].email}</strong>.</p>
           <p><a href="javascript:history.back()">← Voltar e atualizar a página da galeria</a></p>
         </div>
       `);
@@ -151,7 +134,7 @@ app.get('/resetar-meus-creditos-agora', async (req, res) => {
       res.send(`
         <div style="font-family: sans-serif; padding: 40px; text-align: center;">
           <h1 style="color: #f44336;">⚠️ Usuário não encontrado</h1>
-          <p>Não foi encontrada nenhuma conta cadastrada com o e-mail ou username <strong>lucille_e_edson</strong>.</p>
+          <p>Nenhum registro com o identificador <strong>lucille_e_edson</strong> foi encontrado na coluna 'email'.</p>
         </div>
       `);
     }
