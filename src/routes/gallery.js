@@ -19,7 +19,7 @@ router.get('/view/:key', async (req, res) => {
     const photoKey = req.params.key;
 
     // URL direta ou assinada da AWS S3 para exibir a foto na grade e no modal
-    const imageUrl = `https://seu-bucket.s3.amazonaws.com/${photoKey}`; // Ajuste se necessário para sua função do S3
+    const imageUrl = `https://studio-rassi-ensaios-2026.s3.amazonaws.com/${photoKey}`; // Ajuste se necessário para sua função do S3
 
     return res.json({ success: true, url: imageUrl });
   } catch (error) {
@@ -65,7 +65,7 @@ router.post('/download', async (req, res) => {
 
     const urls = imageKeys.map(key => ({
       key: key,
-      url: `https://seu-bucket.s3.amazonaws.com/${key}` // Ajuste conforme sua função do S3
+      url: `https://studio-rassi-ensaios-2026.s3.amazonaws.com/${key}` // Ajuste conforme sua função do S3
     }));
 
     return res.json({
