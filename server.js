@@ -125,29 +125,28 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA CORRETA PARA SERVIR IMAGENS DO AWS S3 (STREAM DIRETO)
+// 4. ROTA DE REDIRECIONAMENTO PARA A URL ASSINADA DO S3
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
 
-  const params = {
-    Bucket: BUCKET_NAME,
-    Key: filename
-  };
+  try {
+    const params = {
+      Bucket: BUCKET_NAME,
+      Key: filename,
+      Expires: 300 // URL válida por 5 minutos
+    };
 
-  // Define o tipo de conteúdo como imagem JPEG para o navegador exibir sem bloqueios
-  res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache de 24h para agilizar novos carregamentos
+    // Gera a URL assinada idêntica àquela que você testou e abriu com sucesso
+    const url = s3.getSignedUrl('getObject', params);
+    
+    // Redireciona o navegador do cliente para a imagem com segurança
+    return res.redirect(url);
 
-  // Faz o fluxo contínuo de dados (stream) diretamente do S3 para a resposta da API
-  const stream = s3.getObject(params).createReadStream();
-
-  stream.on('error', (err) => {
-    console.error(`❌ Erro no stream do S3 para o arquivo [${filename}]:`, err);
-    return res.status(404).json({ success: false, message: 'Imagem não encontrada.' });
-  });
-
-  stream.pipe(res);
+  } catch (error) {
+    console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
+    return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
+  }
 });
 
 // ============================================================
