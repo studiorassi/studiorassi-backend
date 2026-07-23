@@ -19,7 +19,7 @@ router.post('/login', (req, res) => {
   const cliente = CLIENTES[usuarioDigitado];
 
   if (cliente && cliente.senha === senhaDigitada) {
-    // Garante que o cliente tenha saldo
+    // Garante que o cliente tenha saldo inicial registrado na memória do servidor
     if (!creditosAtuais.has(usuarioDigitado)) {
       creditosAtuais.set(usuarioDigitado, cliente.creditosIniciais);
     }
@@ -55,9 +55,13 @@ router.get('/credits', (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const username = decoded.username || decoded.email; 
     
-    const credits = creditosAtuais.has(username) 
-      ? creditosAtuais.get(username) 
-      : (CLIENTES[username] ? CLIENTES[username].creditosIniciais : 0);
+    // Busca o saldo atualizado diretamente do servidor (evita resetar para 30 ao atualizar a página)
+    if (!creditosAtuais.has(username)) {
+      const inicial = CLIENTES[username] ? CLIENTES[username].creditosIniciais : 30;
+      creditosAtuais.set(username, inicial);
+    }
+
+    const credits = creditosAtuais.get(username);
 
     res.json({ success: true, data: { credits } });
   } catch (err) {
