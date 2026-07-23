@@ -126,7 +126,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Compatibilidade Universal)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Retorna JSON com a URL assinada)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -140,19 +140,13 @@ app.get('/api/gallery/view/:filename', (req, res) => {
 
     const url = s3.getSignedUrl('getObject', params);
 
-    // Verifica se o front-end pediu JSON ou se espera redirecionamento direto
-    const acceptHeader = req.headers.accept || '';
-    if (acceptHeader.includes('application/json')) {
-      return res.json({
-        success: true,
-        url: url,
-        imageUrl: url,
-        link: url
-      });
-    }
-
-    // Caso contrário, redireciona o navegador para a imagem assinada do S3
-    return res.redirect(url);
+    // Retorna o JSON estruturado que o cliente.html espera ler em 'json.url'
+    return res.json({
+      success: true,
+      url: url,
+      imageUrl: url,
+      link: url
+    });
 
   } catch (error) {
     console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
