@@ -18,4 +18,19 @@ pool.connect((err, client, release) => {
   }
 });
 
-module.exports = { pool };
+// 🔄 Função utilitária para resetar créditos de um e-mail específico
+async function resetarCreditsTeste(rodrigodeap@gmail.com) {
+  try {
+    const query = 'UPDATE users SET credits = 30 WHERE email = $1 RETURNING *;';
+    const result = await pool.query(query, [email]);
+    if (result.rows.length > 0) {
+      console.log(`✅ Créditos resetados para 30 para o usuário: ${email}`);
+    } else {
+      console.log(`⚠️ Usuário não encontrado: ${email}`);
+    }
+  } catch (error) {
+    console.error('❌ Erro ao resetar créditos:', error);
+  }
+}
+
+module.exports = { pool, resetarCreditsTeste };
