@@ -13,21 +13,17 @@ const s3 = new AWS.S3({
 });
 
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'studio-rassi-ensaios-2026';
-const THUMBNAIL_FOLDER = 'thumbnails/'; // Pasta para miniaturas
 
 // ============================================================
-// ROTA PARA VISUALIZAR IMAGEM (Puxa da pasta thumbnails/)
+// ROTA PARA VISUALIZAR IMAGEM (Direto da raiz do S3)
 // ============================================================
 router.get('/view/:key', async (req, res) => {
   try {
     const { key } = req.params;
     
-    // Procura a miniatura dentro da pasta thumbnails/
-    const thumbnailKey = THUMBNAIL_FOLDER + key;
-    
     const params = {
       Bucket: S3_BUCKET_NAME,
-      Key: thumbnailKey,
+      Key: key,
       Expires: 60
     };
     
@@ -41,7 +37,7 @@ router.get('/view/:key', async (req, res) => {
 });
 
 // ============================================================
-// ROTA PARA DOWNLOAD DA IMAGEM ORIGINAL (Raiz do bucket)
+// ROTA PARA DOWNLOAD DA IMAGEM ORIGINAL
 // ============================================================
 router.post('/download', async (req, res) => {
   try {
@@ -51,7 +47,6 @@ router.post('/download', async (req, res) => {
       return res.status(400).json({ error: 'imageKeys é obrigatório' });
     }
     
-    // Gera URLs assinadas para a imagem ORIGINAL (direto da raiz, sem a pasta thumbnails)
     const urls = imageKeys.map(key => {
       const params = {
         Bucket: S3_BUCKET_NAME,
