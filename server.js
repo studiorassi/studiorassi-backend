@@ -118,7 +118,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Redirecionamento S3)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Validade de 72 horas)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -127,13 +127,14 @@ app.get('/api/gallery/view/:filename', (req, res) => {
     const params = {
       Bucket: BUCKET_NAME,
       Key: filename,
-      Expires: 300
+      Expires: 259200 // Validade sincronizada com o cronômetro de 72 horas (259200 segundos)
     };
 
     const url = s3.getSignedUrl('getObject', params);
+    console.log(`🖼️ Gerando link S3 válido por 72h para: ${filename}`);
     return res.redirect(url);
   } catch (error) {
-    console.error(`❌ Erro ao buscar imagem [${filename}]:`, error);
+    console.error(`❌ Erro ao buscar imagem [${filename}] no S3:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
   }
 });
