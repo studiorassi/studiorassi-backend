@@ -33,6 +33,7 @@ app.post('/api/auth/login', async (req, res) => {
     const result = await pool.query(query, [email]);
 
     if (result.rows.length === 0) {
+      console.log(`⚠️ Usuário não encontrado: ${email}`);
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
     }
 
@@ -51,7 +52,7 @@ app.post('/api/auth/login', async (req, res) => {
       token: token,
       user: {
         id: user.id,
-        name: user.name || 'Lucille e Edson',
+        name: user.name || 'Cliente',
         email: user.email,
         credits: user.credits
       }
@@ -64,20 +65,40 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ============================================================
-// 2. ROTA PARA CONSULTAR CRÉDITOS DO USUÁRIO
+// FUNÇÃO AUXILIAR PARA IDENTIFICAR O USUÁRIO PELO TOKEN
+// ============================================================
+const getUserByToken = async (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return null;
+
+  try {
+    const token = authHeader.replace('Bearer ', '');
+    const decoded = Buffer.from(token, 'base64').toString('ascii');
+    const [userId, email] = decoded.split(':');
+
+    const query = 'SELECT * FROM users WHERE id = $1 OR email = $2;';
+    const result = await pool.query(query, [userId, email]);
+
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+// ============================================================
+// 2. ROTA PARA CONSULTAR CRÉDITOS DO USUÁRIO LOGADO
 // ============================================================
 app.get('/api/auth/credits', async (req, res) => {
   try {
-    const query = 'SELECT credits FROM users WHERE email = $1;';
-    const result = await pool.query(query, ['lucille_e_edson']);
+    const user = await getUserByToken(req);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Usuário não autenticado.' });
     }
 
     return res.json({
       success: true,
-      credits: result.rows[0].credits
+      credits: user.credits
     });
 
   } catch (error) {
@@ -93,24 +114,21 @@ app.post('/api/auth/debit-credit', async (req, res) => {
   const { imageKey } = req.body;
 
   try {
-    const userQuery = 'SELECT id, credits FROM users WHERE email = $1;';
-    const userResult = await pool.query(userQuery, ['lucille_e_edson']);
+    const user = await getUserByToken(req);
 
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Usuário não autenticado.' });
     }
 
-    const currentCredits = userResult.rows[0].credits;
-
-    if (currentCredits <= 0) {
+    if (user.credits <= 0) {
       return res.status(400).json({ success: false, message: 'Saldo de créditos insuficiente.' });
     }
 
-    const newCredits = currentCredits - 1;
+    const newCredits = user.credits - 1;
     const updateQuery = 'UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;';
-    const updateResult = await pool.query(updateQuery, [newCredits, userResult.rows[0].id]);
+    const updateResult = await pool.query(updateQuery, [newCredits, user.id]);
 
-    console.log(`💳 Crédito debitado para a foto [${imageKey}]. Restantes: ${newCredits}`);
+    console.log(`💳 Crédito debitado para [${user.email}]. Restantes: ${newCredits}`);
 
     return res.json({
       success: true,
@@ -132,9 +150,9 @@ app.get('/api/gallery/view/:filename', (req, res) => {
 
   try {
     const params = {
-      Bucket: 'studio-rassi-ensaios-2026', // Nome exato do bucket fixado aqui
+      Bucket: 'studio-rassi-ensaios-2026',
       Key: filename,
-      Expires: 300 // URL válida por 5 minutos
+      Expires: 300
     };
 
     const url = s3.getSignedUrl('getObject', params);
