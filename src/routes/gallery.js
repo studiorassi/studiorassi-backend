@@ -31,7 +31,7 @@ router.post('/download', async (req, res) => {
     if (saldoAtual < custoDesejado) {
       return res.status(402).json({ 
         success: false, 
-        message: 'Créditos insuficientes! Adquira mais créditos para continuar baixando.' 
+        message: 'Seus créditos acabaram! Adquira mais créditos para continuar baixando.' 
       });
     }
 
@@ -39,7 +39,6 @@ router.post('/download', async (req, res) => {
     creditosAtuais.set(username, novoSaldo);
 
     // Mantenha aqui a sua lógica de integração com a AWS S3 para gerar os links assinados
-    // (Exemplo padrão de retorno para as URLs)
     const urls = imageKeys.map(key => ({
       key: key,
       url: `https://seu-bucket.s3.amazonaws.com/${key}` // Ajuste conforme sua função do S3
