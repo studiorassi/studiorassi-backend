@@ -13,7 +13,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configuração oficial do AWS S3 utilizando as variáveis de ambiente do Render
+// Configuração oficial do AWS S3
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -33,7 +33,6 @@ app.post('/api/auth/login', async (req, res) => {
     const result = await pool.query(query, [email]);
 
     if (result.rows.length === 0) {
-      console.log(`⚠️ Usuário não encontrado: ${email}`);
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
     }
 
@@ -44,8 +43,6 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
-
-    console.log(`✅ Login aprovado para: ${user.email}`);
 
     return res.json({
       success: true,
@@ -64,9 +61,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ============================================================
-// FUNÇÃO AUXILIAR DE SEGURANÇA PARA BUSCAR O USUÁRIO
-// ============================================================
+// Função auxiliar para buscar usuário (com fallback seguro para não zerar créditos)
 const getUserByRequest = async (req) => {
   try {
     const authHeader = req.headers.authorization;
@@ -74,102 +69,71 @@ const getUserByRequest = async (req) => {
       const token = authHeader.replace('Bearer ', '');
       const decoded = Buffer.from(token, 'base64').toString('ascii');
       const [userId, email] = decoded.split(':');
-
-      const queryToken = 'SELECT * FROM users WHERE id = $1 OR email = $2;';
-      const resToken = await pool.query(queryToken, [userId, email]);
+      const resToken = await pool.query('SELECT * FROM users WHERE id = $1 OR email = $2;', [userId, email]);
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
-  } catch (e) {
-    // Ignora e tenta o fallback
-  }
+  } catch (e) {}
 
-  // Fallback automático para garantir que a galeria nunca fique sem créditos
-  const fallbackQuery = 'SELECT * FROM users WHERE email = $1 OR email = $2 LIMIT 1;';
-  const fallbackRes = await pool.query(fallbackQuery, ['rodrigodeap@gmail.com', 'lucille_e_edson']);
-  
-  if (fallbackRes.rows.length > 0) return fallbackRes.rows[0];
-
-  // Última alternativa: pega o primeiro usuário da tabela
-  const anyUser = 'SELECT * FROM users LIMIT 1;';
-  const anyRes = await pool.query(anyUser);
-  return anyRes.rows.length > 0 ? anyRes.rows[0] : null;
+  const fallbackRes = await pool.query('SELECT * FROM users LIMIT 1;');
+  return fallbackRes.rows.length > 0 ? fallbackRes.rows[0] : null;
 };
 
 // ============================================================
-// 2. ROTA PARA CONSULTAR CRÉDITOS DO USUÁRIO
+// 2. ROTA PARA CONSULTAR CRÉDITOS
 // ============================================================
 app.get('/api/auth/credits', async (req, res) => {
   try {
     const user = await getUserByRequest(req);
+    if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'Nenhum usuário encontrado.' });
-    }
-
-    return res.json({
-      success: true,
-      credits: user.credits
-    });
-
+    return res.json({ success: true, credits: user.credits });
   } catch (error) {
-    console.error('❌ Erro ao buscar créditos:', error);
     return res.status(500).json({ success: false, message: 'Erro no servidor.' });
   }
 });
 
 // ============================================================
-// 3. ROTA PARA DEBITAR 1 CRÉDITO APÓS DOWNLOAD
+// 3. ROTA PARA DEBITAR CRÉDITO
 // ============================================================
 app.post('/api/auth/debit-credit', async (req, res) => {
-  const { imageKey } = req.body;
-
   try {
     const user = await getUserByRequest(req);
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
 
     if (user.credits <= 0) {
       return res.status(400).json({ success: false, message: 'Saldo de créditos insuficiente.' });
     }
 
     const newCredits = user.credits - 1;
-    const updateQuery = 'UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;';
-    const updateResult = await pool.query(updateQuery, [newCredits, user.id]);
-
-    console.log(`💳 Crédito debitado para [${user.email}]. Restantes: ${newCredits}`);
+    const updateResult = await pool.query('UPDATE users SET credits = $1 WHERE id = $2 RETURNING credits;', [newCredits, user.id]);
 
     return res.json({
       success: true,
       message: 'Crédito debitado com sucesso.',
       credits: updateResult.rows[0].credits
     });
-
   } catch (error) {
-    console.error('❌ Erro ao debitar crédito:', error);
     return res.status(500).json({ success: false, message: 'Erro ao processar o débito.' });
   }
 });
 
 // ============================================================
-// 4. ROTA DE REDIRECIONAMENTO PARA O S3 (COM BUCKET DINÂMICO)
+// 4. ROTA DE VISUALIZAÇÃO DE IMAGEM (Redirecionamento S3)
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
 
   try {
     const params = {
-      Bucket: BUCKET_NAME, // Puxa direto da variável de ambiente do Render
+      Bucket: BUCKET_NAME,
       Key: filename,
       Expires: 300
     };
 
     const url = s3.getSignedUrl('getObject', params);
     return res.redirect(url);
-
   } catch (error) {
-    console.error(`❌ Erro ao gerar URL para o arquivo [${filename}]:`, error);
+    console.error(`❌ Erro ao buscar imagem [${filename}]:`, error);
     return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
   }
 });
