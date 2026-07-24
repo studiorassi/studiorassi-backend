@@ -175,7 +175,7 @@ app.get('/api/gallery/list/:folder', async (req, res) => {
   try {
     const params = {
       Bucket: bucketName,
-      Prefix: folder + '/', // Ex: "videos/" ou "fotos/"
+      Prefix: folder + '/',
       Delimiter: '/'
     };
     
@@ -183,7 +183,7 @@ app.get('/api/gallery/list/:folder', async (req, res) => {
     
     // Filtra apenas os arquivos (não pastas)
     const files = data.Contents
-      .filter(item => item.Key !== folder + '/') // Remove a própria pasta
+      .filter(item => item.Key !== folder + '/')
       .map(item => {
         const filename = item.Key.replace(folder + '/', '');
         return {
