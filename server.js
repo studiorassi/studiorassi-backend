@@ -4,7 +4,7 @@ const BUCKETS = {
   fornecedor: process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026'
 };
 
-// Rota para visualização com bucket dinâmico
+// Rota de visualização com bucket dinâmico
 app.get('/api/gallery/view/:bucket/:filename', (req, res) => {
   const { bucket, filename } = req.params;
   const bucketName = BUCKETS[bucket] || BUCKETS.clientes;
