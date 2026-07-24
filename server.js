@@ -123,7 +123,7 @@ app.get('/api/gallery/list/:folder', async (req, res) => {
     };
     
     const data = await s3.listObjectsV2(params).promise();
-    const files = data.Contents
+    const files = (data.Contents || [])
       .filter(item => item.Key !== folder + '/')
       .map(item => ({
         filename: item.Key.replace(folder + '/', ''),
@@ -145,7 +145,7 @@ app.get('/api/gallery/list/:folder', async (req, res) => {
 });
 
 // ============================================================
-// ROTA DE LISTAGEM - FORNECEDOR (CORRIGIDA)
+// 5. ROTA DE LISTAGEM - FORNECEDOR
 // ============================================================
 app.get('/api/gallery/list/fornecedor/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -154,12 +154,12 @@ app.get('/api/gallery/list/fornecedor/:folder', async (req, res) => {
   try {
     const params = {
       Bucket: bucketName,
-      Prefix: folder + '/', // 🔥 CORRETO: apenas "fotos/"
+      Prefix: folder + '/',
       Delimiter: '/'
     };
     
     const data = await s3.listObjectsV2(params).promise();
-    const files = data.Contents
+    const files = (data.Contents || [])
       .filter(item => item.Key !== folder + '/')
       .map(item => ({
         filename: item.Key.replace(folder + '/', ''),
@@ -201,16 +201,13 @@ app.get('/api/gallery/view/*', (req, res) => {
 });
 
 // ============================================================
-// ROTA DE VISUALIZAÇÃO - FORNECEDOR (CORRIGIDA)
+// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR
 // ============================================================
-app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
-  const { folder } = req.params;
-  const filePath = req.params[0];
+app.get('/api/gallery/view/fornecedor/:folder/:filename', (req, res) => {
+  const { folder, filename } = req.params;
+  const fullKey = `${folder}/${filename}`;
   
-  // 🔥 CORRIGIDO: NÃO adiciona "fornecedor/" ao caminho
-  const fullKey = `${folder}/${filePath}`;
-  
-  console.log(`🔍 Buscando arquivo: ${fullKey}`); // Log para debug
+  console.log(`🔍 Buscando arquivo fornecedor: ${fullKey}`);
   
   try {
     const params = {
@@ -221,13 +218,13 @@ app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
     const url = s3.getSignedUrl('getObject', params);
     return res.redirect(url);
   } catch (error) {
-    console.error(`❌ Erro ao gerar URL:`, error);
-    return res.status(500).json({ success: false, message: 'Erro ao carregar a imagem.' });
+    console.error(`❌ Erro ao gerar URL para fornecedor [${fullKey}]:`, error);
+    return res.status(500).json({ success: false, message: 'Erro ao carregar a mídia.' });
   }
 });
 
 // ============================================================
-// ROTA DE THUMBNAIL - FORNECEDOR (CORRIGIDA)
+// 8. ROTA DE THUMBNAIL - FORNECEDOR
 // ============================================================
 app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) => {
   const { folder, filename } = req.params;
@@ -238,15 +235,9 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
   }
   
   const thumbnailFilename = filename.replace('.mp4', '.jpg');
-  const fullKey = `${folder}/${thumbnailFilename}`; // 🔥 CORRETO
+  const fullKey = `${folder}/${thumbnailFilename}`;
   
   try {
-    const headParams = {
-      Bucket: bucketName,
-      Key: fullKey
-    };
-    await s3.headObject(headParams).promise();
-    
     const getParams = {
       Bucket: bucketName,
       Key: fullKey,
@@ -256,10 +247,14 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
     return res.redirect(url);
     
   } catch (error) {
-    // Retorna placeholder SVG
-    const svg = `...`; // (mantenha o SVG do placeholder)
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+        <rect width="400" height="300" fill="#1f0510"/>
+        <text x="200" y="150" font-family="Arial" font-size="16" fill="#D4A3B3" text-anchor="middle">Vídeo Fornecedor</text>
+      </svg>
+    `;
     res.set('Content-Type', 'image/svg+xml');
-    res.send(svg);
+    return res.send(svg);
   }
 });
 
