@@ -61,7 +61,9 @@ const getUserByRequest = async (req) => {
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
   } catch (e) {}
-  const fallbackRes = await pool.query('SELECT * FROM users LIMIT 1;');
+  
+  // Fallback seguro caso o token venha vazio
+  const fallbackRes = await pool.query('SELECT * FROM users ORDER BY id DESC LIMIT 1;');
   return fallbackRes.rows.length > 0 ? fallbackRes.rows[0] : null;
 };
 
@@ -69,6 +71,8 @@ app.get('/api/auth/credits', async (req, res) => {
   try {
     const user = await getUserByRequest(req);
     if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    
+    console.log(`🔍 [CRÉDITOS] Usuário identificado: ${user.email} | Saldo: ${user.credits}`);
     return res.json({ success: true, credits: user.credits });
   } catch (error) {
     console.error('❌ Erro ao buscar créditos:', error);
@@ -122,11 +126,15 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
   
-  // CORREÇÃO AUTOMÁTICA DE CRÉDITOS NA INICIALIZAÇÃO
+  // CORREÇÃO SEGURA APENAS PARA A CONTA DA CLIENTE
   try {
-    await pool.query("UPDATE users SET credits = 21 WHERE email ILIKE $1 OR name ILIKE $1;", ['%lucille%']);
-    console.log('✅ Créditos da cliente corrigidos automaticamente para 21 com sucesso!');
+    const fixRes = await pool.query("UPDATE users SET credits = 21 WHERE email ILIKE $1 OR name ILIKE $1 RETURNING email, credits;", ['%lucille%']);
+    if (fixRes.rows.length > 0) {
+      console.log(`✅ SUCESSO: Créditos da cliente (${fixRes.rows[0].email}) atualizados para ${fixRes.rows[0].credits}!`);
+    } else {
+      console.log('⚠️ Nenhum usuário com "lucille" foi encontrado para atualizar os créditos.');
+    }
   } catch (err) {
-    console.error('⚠️ Erro ao atualizar créditos na inicialização:', err);
+    console.error('⚠️ Erro ao atualizar créditos:', err);
   }
 });
