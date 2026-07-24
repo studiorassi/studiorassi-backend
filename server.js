@@ -102,7 +102,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO UNIVERSAL
+// ROTA DE VISUALIZAÇÃO UNIVERSAL
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -126,15 +126,9 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
   
-  // CORREÇÃO: Atualiza créditos da cliente para 21
-  try {
-    const fixRes = await pool.query("UPDATE users SET credits = 21 WHERE email ILIKE $1 OR name ILIKE $1 RETURNING email, credits;", ['%lucille%']);
-    if (fixRes.rows.length > 0) {
-      console.log(`✅ SUCESSO: Créditos da cliente (${fixRes.rows[0].email}) atualizados para ${fixRes.rows[0].credits}!`);
-    } else {
-      console.log('⚠️ Nenhum usuário com "lucille" foi encontrado para atualizar os créditos.');
-    }
-  } catch (err) {
-    console.error('⚠️ Erro ao atualizar créditos:', err);
-  }
+  // ============================================================
+  // REMOVIDO: Correção automática de créditos
+  // Agora os créditos NUNCA são resetados automaticamente
+  // ============================================================
+  console.log('✅ Sistema de créditos funcionando sem reset automático.');
 });
