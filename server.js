@@ -98,7 +98,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE VISUALIZAÇÃO UNIVERSAL (Acessível por qualquer navegador/celular)
+// 4. ROTA DE VISUALIZAÇÃO UNIVERSAL
 // ============================================================
 app.get('/api/gallery/view/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -109,7 +109,6 @@ app.get('/api/gallery/view/:filename', (req, res) => {
       Expires: 259200 // 72 horas
     };
 
-    // Gera a URL assinada diretamente e redireciona o navegador para o S3
     const url = s3.getSignedUrl('getObject', params);
     return res.redirect(url);
 
@@ -120,6 +119,14 @@ app.get('/api/gallery/view/:filename', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
+  
+  // CORREÇÃO AUTOMÁTICA DE CRÉDITOS NA INICIALIZAÇÃO
+  try {
+    await pool.query("UPDATE users SET credits = 21 WHERE email ILIKE $1 OR name ILIKE $1;", ['%lucille%']);
+    console.log('✅ Créditos da cliente corrigidos automaticamente para 21 com sucesso!');
+  } catch (err) {
+    console.error('⚠️ Erro ao atualizar créditos na inicialização:', err);
+  }
 });
