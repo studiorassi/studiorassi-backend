@@ -278,3 +278,113 @@ app.listen(PORT, async () => {
   console.log('✅ Sistema de créditos funcionando sem reset automático.');
   console.log('🎬 Rota de thumbnail ativa (com fallback SVG)');
 });
+
+// ============================================================
+// ROTA DE LISTAGEM PARA FORNECEDOR
+// ============================================================
+app.get('/api/gallery/list/fornecedor/:folder', async (req, res) => {
+  const { folder } = req.params;
+  const bucketName = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
+  
+  try {
+    const params = {
+      Bucket: bucketName,
+      Prefix: folder + '/',
+      Delimiter: '/'
+    };
+    
+    const data = await s3.listObjectsV2(params).promise();
+    const files = data.Contents
+      .filter(item => item.Key !== folder + '/')
+      .map(item => ({
+        filename: item.Key.replace(folder + '/', ''),
+        size: item.Size,
+        lastModified: item.LastModified
+      }));
+    
+    return res.json({
+      success: true,
+      folder: folder,
+      count: files.length,
+      files: files
+    });
+    
+  } catch (error) {
+    console.error(`❌ Erro ao listar arquivos da pasta ${folder}:`, error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar arquivos.'
+    });
+  }
+});
+
+// ============================================================
+// ROTA DE VISUALIZAÇÃO PARA FORNECEDOR
+// ============================================================
+app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
+  const { folder } = req.params;
+  const filePath = req.params[0];
+  const bucketName = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
+  
+  const fullKey = `${folder}/${filePath}`;
+  
+  try {
+    const params = {
+      Bucket: bucketName,
+      Key: fullKey,
+      Expires: 259200 // 72 horas
+    };
+    const url = s3.getSignedUrl('getObject', params);
+    return res.redirect(url);
+  } catch (error) {
+    console.error(`❌ Erro ao gerar URL:`, error);
+    return res.status(500).json({ error: 'Erro ao gerar URL' });
+  }
+});
+
+// ============================================================
+// ROTA DE THUMBNAIL PARA FORNECEDOR
+// ============================================================
+app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) => {
+  const { folder, filename } = req.params;
+  const bucketName = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
+  
+  if (!filename.endsWith('.mp4')) {
+    return res.status(400).json({ error: 'Arquivo não é um vídeo.' });
+  }
+  
+  const thumbnailFilename = filename.replace('.mp4', '.jpg');
+  const thumbnailKey = `${folder}/${thumbnailFilename}`;
+  
+  try {
+    // Verifica se a thumbnail existe
+    const headParams = {
+      Bucket: bucketName,
+      Key: thumbnailKey
+    };
+    await s3.headObject(headParams).promise();
+    
+    const getParams = {
+      Bucket: bucketName,
+      Key: thumbnailKey,
+      Expires: 3600
+    };
+    const url = s3.getSignedUrl('getObject', getParams);
+    return res.redirect(url);
+    
+  } catch (error) {
+    // Retorna placeholder SVG
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+        <rect width="400" height="300" fill="#1f0510"/>
+        <rect x="20" y="20" width="360" height="260" rx="10" fill="#2C0714" stroke="#D4A3B3" stroke-width="1" opacity="0.5"/>
+        <circle cx="200" cy="130" r="45" fill="#D4A3B3" opacity="0.2"/>
+        <polygon points="185,110 185,150 225,130" fill="#D4A3B3"/>
+        <text x="200" y="210" font-family="Arial, sans-serif" font-size="16" fill="#D4A3B3" text-anchor="middle" font-weight="bold">🎬 Vídeo</text>
+        <text x="200" y="235" font-family="Arial, sans-serif" font-size="12" fill="#7a5f5a" text-anchor="middle">Clique para assistir</text>
+      </svg>
+    `;
+    res.set('Content-Type', 'image/svg+xml');
+    res.send(svg);
+  }
+});
