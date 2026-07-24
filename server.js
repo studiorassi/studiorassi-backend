@@ -126,7 +126,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
   
-  // CORREÇÃO SEGURA APENAS PARA A CONTA DA CLIENTE
+  // CORREÇÃO: Atualiza créditos da cliente para 21
   try {
     const fixRes = await pool.query("UPDATE users SET credits = 21 WHERE email ILIKE $1 OR name ILIKE $1 RETURNING email, credits;", ['%lucille%']);
     if (fixRes.rows.length > 0) {
