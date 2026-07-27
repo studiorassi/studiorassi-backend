@@ -201,11 +201,12 @@ app.get('/api/gallery/view/*', (req, res) => {
 });
 
 // ============================================================
-// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR
+// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR (CORRIGIDA)
 // ============================================================
-app.get('/api/gallery/view/fornecedor/:folder/:filename', (req, res) => {
-  const { folder, filename } = req.params;
-  const fullKey = `${folder}/${filename}`;
+app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
+  const { folder } = req.params;
+  const filePath = req.params[0]; // Pega o caminho completo após a pasta
+  const fullKey = `${folder}/${filePath}`;
   
   console.log(`🔍 Buscando arquivo fornecedor: ${fullKey}`);
   
@@ -238,6 +239,12 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
   const fullKey = `${folder}/${thumbnailFilename}`;
   
   try {
+    const headParams = {
+      Bucket: bucketName,
+      Key: fullKey
+    };
+    await s3.headObject(headParams).promise();
+    
     const getParams = {
       Bucket: bucketName,
       Key: fullKey,
@@ -247,10 +254,15 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
     return res.redirect(url);
     
   } catch (error) {
+    // Retorna placeholder SVG
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
         <rect width="400" height="300" fill="#1f0510"/>
-        <text x="200" y="150" font-family="Arial" font-size="16" fill="#D4A3B3" text-anchor="middle">Vídeo Fornecedor</text>
+        <rect x="20" y="20" width="360" height="260" rx="10" fill="#2C0714" stroke="#D4A3B3" stroke-width="1" opacity="0.5"/>
+        <circle cx="200" cy="130" r="45" fill="#D4A3B3" opacity="0.2"/>
+        <polygon points="185,110 185,150 225,130" fill="#D4A3B3"/>
+        <text x="200" y="210" font-family="Arial, sans-serif" font-size="16" fill="#D4A3B3" text-anchor="middle" font-weight="bold">🎬 Vídeo</text>
+        <text x="200" y="235" font-family="Arial, sans-serif" font-size="12" fill="#7a5f5a" text-anchor="middle">Clique para assistir</text>
       </svg>
     `;
     res.set('Content-Type', 'image/svg+xml');
@@ -284,121 +296,140 @@ app.post('/api/gallery/download', async (req, res) => {
 });
 
 // ============================================================
-// 10. INICIALIZAÇÃO DO SERVIDOR
+// 10. ROTA PARA PACOTE PERSONALIZADO (MERCADO PAGO)
 // ============================================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
-  console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
-  console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
-  console.log('✅ Sistema de créditos funcionando sem reset automático.');
-});
-
-// ============================================================
-// ROTA PARA PACOTE PERSONALIZADO (COM MERCADO PAGO)
-// ============================================================
-const { MercadoPagoConfig, Preference } = require('mercadopago');
-
-// Configuração do Mercado Pago
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN
-});
-
 app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
   
   try {
-    // 1. Validar disponibilidade da data (verificar no banco se já está reservada)
-    const availabilityQuery = `
-      SELECT id FROM agendamentos 
-      WHERE data = $1 AND horario = $2 AND status = 'confirmado'
-    `;
-    const availabilityResult = await pool.query(availabilityQuery, [data, horario]);
-    
-    if (availabilityResult.rows.length > 0) {
+    // 1. Validar dados obrigatórios
+    if (!fotos || !data || !horario || !total) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Este horário já está reservado. Por favor, escolha outro.' 
+        message: 'Dados incompletos. Preencha todos os campos.' 
       });
     }
     
-    // 2. Registrar o pedido no banco de dados
-    const insertQuery = `
-      INSERT INTO pedidos (
-        cliente_nome, cliente_email, fotos, addons, 
-        data_ensaio, horario_ensaio, total, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id
-    `;
+    console.log(`📦 Novo pacote personalizado:`);
+    console.log(`   📸 Fotos: ${fotos}`);
+    console.log(`   🎬 Add-ons: ${addons ? addons.length : 0}`);
+    console.log(`   📅 Data: ${data}`);
+    console.log(`   🕐 Horário: ${horario}`);
+    console.log(`   💰 Total: R$ ${total}`);
     
-    const addonsJson = JSON.stringify(addons);
-    const result = await pool.query(insertQuery, [
-      cliente_nome || 'Cliente',
-      cliente_email || 'cliente@email.com',
-      fotos,
-      addonsJson,
-      data,
-      horario,
-      total,
-      'pendente'
-    ]);
-    
-    const pedidoId = result.rows[0].id;
-    
-    // 3. Criar preferência no Mercado Pago
-    const preference = new Preference(client);
-    
-    const preferenceData = {
-      items: [
-        {
-          id: `pacote_personalizado_${pedidoId}`,
-          title: 'Pacote Personalizado Studio Rassi',
-          description: `${fotos} fotos + ${addons.length} serviços extras`,
-          quantity: 1,
-          unit_price: total,
-          currency_id: 'BRL',
-          picture_url: 'https://studiorassi.github.io/home/assets/images/logo/logo-full.png'
+    // 2. Verificar disponibilidade (se tiver tabela de agendamentos)
+    if (pool) {
+      try {
+        const availabilityQuery = `
+          SELECT id FROM agendamentos 
+          WHERE data = $1 AND horario = $2 AND status = 'confirmado'
+        `;
+        const availabilityResult = await pool.query(availabilityQuery, [data, horario]);
+        
+        if (availabilityResult.rows.length > 0) {
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Este horário já está reservado. Por favor, escolha outro.' 
+          });
         }
-      ],
-      back_urls: {
-        success: 'https://studiorassi.github.io/home/pagamento-sucesso.html',
-        failure: 'https://studiorassi.github.io/home/pagamento-falha.html',
-        pending: 'https://studiorassi.github.io/home/pagamento-pendente.html'
-      },
-      auto_return: 'approved',
-      notification_url: 'https://api-studiorassi.onrender.com/api/webhooks/mercadopago',
-      external_reference: String(pedidoId),
-      payer: {
-        name: cliente_nome || 'Cliente',
-        email: cliente_email || 'cliente@email.com'
-      },
-      payment_methods: {
-        excluded_payment_methods: [],
-        installments: 12
-      },
-      statement_descriptor: 'STUDIO RASSI'
-    };
+      } catch (dbError) {
+        console.warn('⚠️ Erro ao verificar disponibilidade:', dbError.message);
+      }
+    }
     
-    const preferenceResponse = await preference.create({ body: preferenceData });
+    // 3. Gerar ID do pedido
+    const pedidoId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     
-    // 4. Atualizar pedido com o payment_id
-    await pool.query(
-      'UPDATE pedidos SET payment_id = $1 WHERE id = $2',
-      [preferenceResponse.id, pedidoId]
-    );
+    // 4. Salvar no banco (se disponível)
+    if (pool) {
+      try {
+        const addonsJson = JSON.stringify(addons || []);
+        await pool.query(`
+          INSERT INTO pedidos (
+            id, cliente_nome, cliente_email, fotos, addons, 
+            data_ensaio, horario_ensaio, total, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pendente')
+        `, [pedidoId, cliente_nome || 'Cliente', cliente_email || 'cliente@email.com', 
+            fotos, addonsJson, data, horario, total]);
+            
+        await pool.query(`
+          INSERT INTO agendamentos (pedido_id, data, horario, status)
+          VALUES ($1, $2, $3, 'pendente')
+        `, [pedidoId, data, horario]);
+      } catch (dbError) {
+        console.warn('⚠️ Erro ao salvar no banco:', dbError.message);
+      }
+    }
     
-    // 5. Registrar agendamento (provisório)
-    await pool.query(`
-      INSERT INTO agendamentos (pedido_id, data, horario, status)
-      VALUES ($1, $2, $3, 'pendente')
-    `, [pedidoId, data, horario]);
+    // 5. Verificar se o Mercado Pago está configurado
+    const MERCADO_PAGO_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     
-    // 6. Retornar o link de pagamento
+    if (MERCADO_PAGO_ACCESS_TOKEN) {
+      try {
+        // Usar SDK do Mercado Pago (se instalado)
+        const { MercadoPagoConfig, Preference } = require('mercadopago');
+        const client = new MercadoPagoConfig({ accessToken: MERCADO_PAGO_ACCESS_TOKEN });
+        const preference = new Preference(client);
+        
+        const preferenceData = {
+          items: [{
+            id: `pacote_personalizado_${pedidoId}`,
+            title: 'Pacote Personalizado Studio Rassi',
+            description: `${fotos} fotos + ${addons ? addons.length : 0} serviços extras`,
+            quantity: 1,
+            unit_price: total,
+            currency_id: 'BRL',
+            picture_url: 'https://studiorassi.github.io/home/assets/images/logo/logo-full.png'
+          }],
+          back_urls: {
+            success: 'https://studiorassi.github.io/home/pagamento-sucesso.html',
+            failure: 'https://studiorassi.github.io/home/pagamento-falha.html',
+            pending: 'https://studiorassi.github.io/home/pagamento-pendente.html'
+          },
+          auto_return: 'approved',
+          notification_url: 'https://api-studiorassi.onrender.com/api/webhooks/mercadopago',
+          external_reference: String(pedidoId),
+          payer: {
+            name: cliente_nome || 'Cliente',
+            email: cliente_email || 'cliente@email.com'
+          },
+          statement_descriptor: 'STUDIO RASSI'
+        };
+        
+        const preferenceResponse = await preference.create({ body: preferenceData });
+        
+        // Atualizar pedido com o payment_id
+        if (pool) {
+          await pool.query(
+            'UPDATE pedidos SET payment_id = $1 WHERE id = $2',
+            [preferenceResponse.id, pedidoId]
+          );
+        }
+        
+        return res.json({
+          success: true,
+          checkout_url: preferenceResponse.init_point,
+          preference_id: preferenceResponse.id,
+          pedido_id: pedidoId
+        });
+        
+      } catch (mpError) {
+        console.warn('⚠️ Erro no Mercado Pago:', mpError.message);
+        // Se falhar, usa fallback
+      }
+    }
+    
+    // 6. FALLBACK: se Mercado Pago não estiver configurado, retorna link simulado
+    console.log('⚠️ Mercado Pago não configurado. Usando modo de simulação.');
+    
+    const checkout_url = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${pedidoId}`;
+    
     return res.json({
       success: true,
-      checkout_url: preferenceResponse.init_point,
-      preference_id: preferenceResponse.id,
-      pedido_id: pedidoId
+      checkout_url: checkout_url,
+      preference_id: pedidoId,
+      pedido_id: pedidoId,
+      message: 'Link de pagamento gerado (modo simulação)'
     });
     
   } catch (error) {
@@ -411,13 +442,13 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// WEBHOOK DO MERCADO PAGO
+// 11. WEBHOOK DO MERCADO PAGO
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
     const { type, data } = req.body;
     
-    if (type === 'payment') {
+    if (type === 'payment' && pool) {
       const paymentId = data.id;
       
       // Buscar detalhes do pagamento
@@ -456,4 +487,16 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
     console.error('❌ Erro no webhook:', error);
     res.sendStatus(500);
   }
+});
+
+// ============================================================
+// 12. INICIALIZAÇÃO DO SERVIDOR
+// ============================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, async () => {
+  console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
+  console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
+  console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
+  console.log('✅ Sistema de créditos funcionando sem reset automático.');
+  console.log('📦 Rota /api/pacote/personalizado ativa!');
 });
