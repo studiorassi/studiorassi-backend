@@ -53,6 +53,7 @@ async function setupDatabase() {
           credits INTEGER DEFAULT 0,
           status VARCHAR(20) DEFAULT 'active',
           name VARCHAR(200),
+          email VARCHAR(100),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
@@ -66,6 +67,7 @@ async function setupDatabase() {
         { name: 'password', type: 'VARCHAR(100) NOT NULL DEFAULT \'temp123\'' },
         { name: 'credits', type: 'INTEGER DEFAULT 0' },
         { name: 'name', type: 'VARCHAR(200)' },
+        { name: 'email', type: 'VARCHAR(100)' },
         { name: 'status', type: 'VARCHAR(20) DEFAULT \'active\'' },
         { name: 'created_at', type: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' }
       ];
@@ -82,6 +84,25 @@ async function setupDatabase() {
         if (!check.rows[0].exists) {
           console.log(`   📦 Adicionando coluna ${col.name}...`);
           await pool.query(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`);
+        }
+      }
+      
+      // ===== CORREÇÃO: Remover NOT NULL da coluna email =====
+      const emailNullableCheck = await pool.query(`
+        SELECT 
+          column_name, 
+          is_nullable 
+        FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'email'
+      `);
+      
+      if (emailNullableCheck.rows.length > 0) {
+        if (emailNullableCheck.rows[0].is_nullable === 'NO') {
+          console.log('📦 Removendo restrição NOT NULL da coluna email...');
+          await pool.query(`
+            ALTER TABLE users ALTER COLUMN email DROP NOT NULL
+          `);
+          console.log('✅ Coluna email agora permite NULL');
         }
       }
       
@@ -178,8 +199,8 @@ async function setupDatabase() {
     if (adminCheck.rows.length === 0) {
       console.log('👤 Criando usuário admin padrão...');
       await pool.query(`
-        INSERT INTO users (username, password, credits, name, status)
-        VALUES ('admin', 'admin123', 999, 'Administrador', 'active')
+        INSERT INTO users (username, password, credits, name, status, email)
+        VALUES ('admin', 'admin123', 999, 'Administrador', 'active', NULL)
       `);
       console.log('✅ Usuário admin criado!');
       console.log('   👤 Usuário: admin');
@@ -188,7 +209,7 @@ async function setupDatabase() {
 
     // 7. Mostra estrutura atual da tabela
     const structure = await pool.query(`
-      SELECT column_name, data_type 
+      SELECT column_name, data_type, is_nullable
       FROM information_schema.columns 
       WHERE table_name = 'users' 
       ORDER BY ordinal_position
@@ -196,7 +217,7 @@ async function setupDatabase() {
     
     console.log('📋 Estrutura da tabela users:');
     structure.rows.forEach(row => {
-      console.log(`   - ${row.column_name}: ${row.data_type}`);
+      console.log(`   - ${row.column_name}: ${row.data_type} (${row.is_nullable === 'YES' ? 'permite NULL' : 'NOT NULL'})`);
     });
     
     console.log('✅ Banco de dados configurado com sucesso!');
