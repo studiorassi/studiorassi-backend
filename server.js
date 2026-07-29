@@ -29,12 +29,13 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. ROTAS DE AUTENTICAÇÃO
+// 3. ROTAS DE AUTENTICAÇÃO (USANDO USERNAME)
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    const query = 'SELECT * FROM users WHERE email = $1;';
+    // Busca por username (campo 'email' no frontend = username no banco)
+    const query = 'SELECT * FROM users WHERE username = $1;';
     const result = await pool.query(query, [email]);
     if (result.rows.length === 0) {
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
@@ -43,14 +44,14 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.password !== password) {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
-    const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
+    const token = Buffer.from(`${user.id}:${user.username}`).toString('base64');
     return res.json({
       success: true,
       token: token,
       user: {
         id: user.id,
-        name: user.name || 'Cliente',
-        email: user.email,
+        name: user.username || 'Cliente',
+        username: user.username,
         credits: user.credits
       }
     });
@@ -66,8 +67,8 @@ const getUserByRequest = async (req) => {
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '');
       const decoded = Buffer.from(token, 'base64').toString('ascii');
-      const [userId, email] = decoded.split(':');
-      const resToken = await pool.query('SELECT * FROM users WHERE id = $1 OR email = $2;', [userId, email]);
+      const [userId, username] = decoded.split(':');
+      const resToken = await pool.query('SELECT * FROM users WHERE id = $1 OR username = $2;', [userId, username]);
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
   } catch (e) {}
@@ -201,11 +202,11 @@ app.get('/api/gallery/view/*', (req, res) => {
 });
 
 // ============================================================
-// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR (CORRIGIDA)
+// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR
 // ============================================================
 app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
   const { folder } = req.params;
-  const filePath = req.params[0]; // Pega o caminho completo após a pasta
+  const filePath = req.params[0];
   const fullKey = `${folder}/${filePath}`;
   
   console.log(`🔍 Buscando arquivo fornecedor: ${fullKey}`);
@@ -254,7 +255,6 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
     return res.redirect(url);
     
   } catch (error) {
-    // Retorna placeholder SVG
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
         <rect width="400" height="300" fill="#1f0510"/>
@@ -302,7 +302,6 @@ app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
   
   try {
-    // 1. Validar dados obrigatórios
     if (!fotos || !data || !horario || !total) {
       return res.status(400).json({ 
         success: false, 
@@ -317,7 +316,6 @@ app.post('/api/pacote/personalizado', async (req, res) => {
     console.log(`   🕐 Horário: ${horario}`);
     console.log(`   💰 Total: R$ ${total}`);
     
-    // 2. Verificar disponibilidade (se tiver tabela de agendamentos)
     if (pool) {
       try {
         const availabilityQuery = `
@@ -337,10 +335,8 @@ app.post('/api/pacote/personalizado', async (req, res) => {
       }
     }
     
-    // 3. Gerar ID do pedido
     const pedidoId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     
-    // 4. Salvar no banco (se disponível)
     if (pool) {
       try {
         const addonsJson = JSON.stringify(addons || []);
@@ -361,12 +357,10 @@ app.post('/api/pacote/personalizado', async (req, res) => {
       }
     }
     
-    // 5. Verificar se o Mercado Pago está configurado
     const MERCADO_PAGO_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     
     if (MERCADO_PAGO_ACCESS_TOKEN) {
       try {
-        // Usar SDK do Mercado Pago (se instalado)
         const { MercadoPagoConfig, Preference } = require('mercadopago');
         const client = new MercadoPagoConfig({ accessToken: MERCADO_PAGO_ACCESS_TOKEN });
         const preference = new Preference(client);
@@ -398,7 +392,6 @@ app.post('/api/pacote/personalizado', async (req, res) => {
         
         const preferenceResponse = await preference.create({ body: preferenceData });
         
-        // Atualizar pedido com o payment_id
         if (pool) {
           await pool.query(
             'UPDATE pedidos SET payment_id = $1 WHERE id = $2',
@@ -415,13 +408,10 @@ app.post('/api/pacote/personalizado', async (req, res) => {
         
       } catch (mpError) {
         console.warn('⚠️ Erro no Mercado Pago:', mpError.message);
-        // Se falhar, usa fallback
       }
     }
     
-    // 6. FALLBACK: se Mercado Pago não estiver configurado, retorna link simulado
     console.log('⚠️ Mercado Pago não configurado. Usando modo de simulação.');
-    
     const checkout_url = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${pedidoId}`;
     
     return res.json({
@@ -451,7 +441,6 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
     if (type === 'payment' && pool) {
       const paymentId = data.id;
       
-      // Buscar detalhes do pagamento
       const paymentResponse = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
         headers: {
           'Authorization': `Bearer ${process.env.MERCADO_PAGO_ACCESS_TOKEN}`
@@ -463,14 +452,12 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
       if (payment.status === 'approved') {
         const pedidoId = payment.external_reference;
         
-        // Atualizar pedido para confirmado
         await pool.query(`
           UPDATE pedidos 
           SET status = 'confirmado', payment_status = 'approved', payment_id = $1
           WHERE id = $2
         `, [paymentId, pedidoId]);
         
-        // Atualizar agendamento para confirmado
         await pool.query(`
           UPDATE agendamentos 
           SET status = 'confirmado'
@@ -490,25 +477,12 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 12. INICIALIZAÇÃO DO SERVIDOR
-// ============================================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
-  console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
-  console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
-  console.log('✅ Sistema de créditos funcionando sem reset automático.');
-  console.log('📦 Rota /api/pacote/personalizado ativa!');
-});
-
-// ============================================================
-// ROTAS ADMIN
+// 12. ROTAS ADMIN (ATUALIZADAS COM USERNAME)
 // ============================================================
 
 // Middleware de autenticação admin
 const authAdmin = (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  // Validação simples - melhor usar JWT
   if (token === 'admin-token-simples') {
     next();
   } else {
@@ -525,36 +499,154 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
     
     res.json({
       success: true,
-      users: users.rows[0].count,
-      credits: credits.rows[0].sum || 0,
-      orders: orders.rows[0].count,
-      photos: 116 // ou buscar do S3
+      users: parseInt(users.rows[0].count) || 0,
+      credits: parseInt(credits.rows[0].sum) || 0,
+      orders: parseInt(orders.rows[0].count) || 0,
+      photos: 116
     });
   } catch (error) {
+    console.error('❌ Erro ao carregar stats:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Listar usuários
+// Listar usuários (com username)
 app.get('/api/admin/users', authAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, email, credits, status FROM users ORDER BY id DESC');
+    const result = await pool.query(
+      'SELECT id, username, password, credits, status, created_at FROM users ORDER BY id DESC'
+    );
     res.json({ success: true, users: result.rows });
   } catch (error) {
+    console.error('❌ Erro ao listar usuários:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Criar usuário
+// Criar usuário (apenas username + password + credits)
 app.post('/api/admin/users', authAdmin, async (req, res) => {
-  const { name, email, password, credits } = req.body;
+  const { username, password, credits } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Usuário e senha são obrigatórios.' 
+    });
+  }
+  
   try {
+    // Verificar se usuário já existe
+    const existCheck = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (existCheck.rows.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Usuário já existe. Escolha outro nome.' 
+      });
+    }
+    
     const result = await pool.query(
-      'INSERT INTO users (name, email, password, credits) VALUES ($1, $2, $3, $4) RETURNING id',
-      [name, email, password, credits || 0]
+      'INSERT INTO users (username, password, credits) VALUES ($1, $2, $3) RETURNING id',
+      [username, password, credits || 0]
     );
-    res.json({ success: true, id: result.rows[0].id });
+    
+    res.json({ 
+      success: true, 
+      id: result.rows[0].id,
+      message: 'Usuário criado com sucesso!' 
+    });
   } catch (error) {
+    console.error('❌ Erro ao criar usuário:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Atualizar senha do usuário
+app.put('/api/admin/users/:id/password', authAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { password } = req.body;
+  
+  if (!password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Nova senha é obrigatória.' 
+    });
+  }
+  
+  try {
+    await pool.query(
+      'UPDATE users SET password = $1 WHERE id = $2',
+      [password, id]
+    );
+    res.json({ 
+      success: true, 
+      message: 'Senha atualizada com sucesso!' 
+    });
+  } catch (error) {
+    console.error('❌ Erro ao atualizar senha:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Atualizar usuário
+app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { username, password, credits } = req.body;
+  
+  try {
+    let query = 'UPDATE users SET ';
+    const updates = [];
+    const values = [];
+    let counter = 1;
+    
+    if (username) {
+      updates.push(`username = $${counter}`);
+      values.push(username);
+      counter++;
+    }
+    if (password) {
+      updates.push(`password = $${counter}`);
+      values.push(password);
+      counter++;
+    }
+    if (credits !== undefined && credits !== null) {
+      updates.push(`credits = $${counter}`);
+      values.push(credits);
+      counter++;
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Nenhum campo para atualizar.' 
+      });
+    }
+    
+    values.push(id);
+    query += updates.join(', ') + ` WHERE id = $${counter}`;
+    
+    await pool.query(query, values);
+    res.json({ 
+      success: true, 
+      message: 'Usuário atualizado com sucesso!' 
+    });
+  } catch (error) {
+    console.error('❌ Erro ao atualizar usuário:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Excluir usuário
+app.delete('/api/admin/users/:id', authAdmin, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    res.json({ 
+      success: true, 
+      message: 'Usuário excluído com sucesso!' 
+    });
+  } catch (error) {
+    console.error('❌ Erro ao excluir usuário:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -562,18 +654,40 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
 // Adicionar créditos
 app.post('/api/admin/credits/add', authAdmin, async (req, res) => {
   const { userId, amount, reason } = req.body;
+  
+  if (!userId || !amount || amount <= 0) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Usuário e quantidade válida são obrigatórios.' 
+    });
+  }
+  
   try {
-    await pool.query(
-      'UPDATE users SET credits = credits + $1 WHERE id = $2',
+    const result = await pool.query(
+      'UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING credits',
       [amount, userId]
     );
-    // Registrar transação
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado.' 
+      });
+    }
+    
     await pool.query(
-      'INSERT INTO transactions (user_id, amount, type, description) VALUES ($1, $2, $3, $4)',
-      [userId, amount, 'admin_add', reason || 'Adição manual']
+      `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+       VALUES ($1, $2, 'admin_add', $3, NOW())`,
+      [userId, amount, reason || 'Adição manual']
     );
-    res.json({ success: true });
+    
+    res.json({ 
+      success: true, 
+      credits: result.rows[0].credits,
+      message: `${amount} créditos adicionados com sucesso!` 
+    });
   } catch (error) {
+    console.error('❌ Erro ao adicionar créditos:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -581,21 +695,68 @@ app.post('/api/admin/credits/add', authAdmin, async (req, res) => {
 // Resetar créditos
 app.post('/api/admin/credits/reset', authAdmin, async (req, res) => {
   const { userId, amount, reason } = req.body;
+  
+  if (!userId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Usuário é obrigatório.' 
+    });
+  }
+  
   try {
-    // Obter créditos atuais
     const current = await pool.query('SELECT credits FROM users WHERE id = $1', [userId]);
-    const diff = amount - (current.rows[0]?.credits || 0);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Usuário não encontrado.' 
+      });
+    }
+    
+    const diff = (amount || 0) - (current.rows[0].credits || 0);
     
     await pool.query(
       'UPDATE users SET credits = $1 WHERE id = $2',
-      [amount, userId]
+      [amount || 0, userId]
     );
+    
     await pool.query(
-      'INSERT INTO transactions (user_id, amount, type, description) VALUES ($1, $2, $3, $4)',
-      [userId, diff, 'admin_reset', reason || 'Reset manual']
+      `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+       VALUES ($1, $2, 'admin_reset', $3, NOW())`,
+      [userId, diff, reason || 'Reset manual']
     );
-    res.json({ success: true });
+    
+    res.json({ 
+      success: true, 
+      message: `Créditos resetados para ${amount || 0}!` 
+    });
   } catch (error) {
+    console.error('❌ Erro ao resetar créditos:', error);
     res.status(500).json({ success: false, message: error.message });
   }
+});
+
+// Listar pedidos (admin)
+app.get('/api/admin/orders', authAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM pedidos ORDER BY created_at DESC LIMIT 20'
+    );
+    res.json({ success: true, orders: result.rows });
+  } catch (error) {
+    console.error('❌ Erro ao listar pedidos:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ============================================================
+// 13. INICIALIZAÇÃO DO SERVIDOR
+// ============================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, async () => {
+  console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
+  console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
+  console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
+  console.log('✅ Sistema de créditos funcionando sem reset automático.');
+  console.log('📦 Rota /api/pacote/personalizado ativa!');
+  console.log('🔐 Rotas Admin ativas com autenticação.');
 });
