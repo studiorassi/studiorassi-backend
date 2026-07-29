@@ -29,7 +29,7 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. FUNÇÃO PARA CRIAR/CORRIGIR TABELA USERS (CORREÇÃO FORÇADA)
+// 3. FUNÇÃO PARA RECONSTRUIR A TABELA USERS
 // ============================================================
 async function setupDatabase() {
   console.log('🔍 Verificando estrutura do banco de dados...');
@@ -61,10 +61,30 @@ async function setupDatabase() {
       console.log('📦 Verificando colunas da tabela users...');
       
       // ============================================================
-      // CORREÇÃO FORÇADA: REMOVER NOT NULL DA COLUNA EMAIL
+      // REMOVER COLUNA password_hash SE EXISTIR
       // ============================================================
+      const passwordHashExists = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'password_hash'
+        )
+      `);
       
-      // 1. Verifica se a coluna email existe
+      if (passwordHashExists.rows[0].exists) {
+        console.log('🗑️ Removendo coluna password_hash (obsoleta)...');
+        try {
+          await pool.query(`
+            ALTER TABLE users DROP COLUMN password_hash CASCADE
+          `);
+          console.log('✅ Coluna password_hash removida!');
+        } catch (err) {
+          console.log('⚠️ Erro ao remover password_hash:', err.message);
+        }
+      }
+      
+      // ============================================================
+      // REMOVER COLUNA email SE EXISTIR E TIVER NOT NULL
+      // ============================================================
       const emailExists = await pool.query(`
         SELECT EXISTS (
           SELECT 1 FROM information_schema.columns 
@@ -75,7 +95,6 @@ async function setupDatabase() {
       if (emailExists.rows[0].exists) {
         console.log('📦 Coluna email encontrada. Verificando restrições...');
         
-        // Verifica se é NOT NULL
         const emailNullable = await pool.query(`
           SELECT is_nullable 
           FROM information_schema.columns 
@@ -83,70 +102,70 @@ async function setupDatabase() {
         `);
         
         if (emailNullable.rows[0].is_nullable === 'NO') {
-          console.log('🔧 Removendo restrição NOT NULL da coluna email...');
-          
-          try {
-            // Tenta remover a restrição NOT NULL
-            await pool.query(`
-              ALTER TABLE users ALTER COLUMN email DROP NOT NULL
-            `);
-            console.log('✅ Restrição NOT NULL removida da coluna email!');
-          } catch (err) {
-            console.log('⚠️ Erro ao remover NOT NULL, tentando abordagem alternativa...');
-            
-            // Abordagem alternativa: recriar a coluna
-            try {
-              // Renomeia a coluna antiga
-              await pool.query(`
-                ALTER TABLE users RENAME COLUMN email TO email_old
-              `);
-              
-              // Cria nova coluna sem NOT NULL
-              await pool.query(`
-                ALTER TABLE users ADD COLUMN email VARCHAR(100)
-              `);
-              
-              // Copia os dados
-              await pool.query(`
-                UPDATE users SET email = email_old WHERE email_old IS NOT NULL
-              `);
-              
-              // Remove a coluna antiga
-              await pool.query(`
-                ALTER TABLE users DROP COLUMN email_old
-              `);
-              
-              console.log('✅ Coluna email recriada sem NOT NULL!');
-            } catch (err2) {
-              console.error('❌ Erro ao recriar coluna email:', err2.message);
-            }
-          }
-        } else {
-          console.log('✅ Coluna email já permite NULL');
+          console.log('🔧 Removendo NOT NULL da coluna email...');
+          await pool.query(`
+            ALTER TABLE users ALTER COLUMN email DROP NOT NULL
+          `);
+          console.log('✅ NOT NULL removido do email');
         }
-      } else {
-        console.log('📦 Coluna email não existe, criando...');
-        await pool.query(`
-          ALTER TABLE users ADD COLUMN email VARCHAR(100)
-        `);
-        console.log('✅ Coluna email criada (permite NULL)');
       }
       
       // ============================================================
-      // VERIFICAÇÃO DAS DEMAIS COLUNAS
+      // GARANTIR QUE A COLUNA password EXISTA
       // ============================================================
+      const passwordExists = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'password'
+        )
+      `);
       
-      // Lista de colunas necessárias
+      if (!passwordExists.rows[0].exists) {
+        console.log('📦 Criando coluna password...');
+        await pool.query(`
+          ALTER TABLE users ADD COLUMN password VARCHAR(100) NOT NULL DEFAULT 'temp123'
+        `);
+        console.log('✅ Coluna password criada!');
+      }
+      
+      // ============================================================
+      // GARANTIR QUE A COLUNA username EXISTA E SEJA UNIQUE
+      // ============================================================
+      const usernameExists = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'username'
+        )
+      `);
+      
+      if (!usernameExists.rows[0].exists) {
+        console.log('📦 Criando coluna username...');
+        await pool.query(`
+          ALTER TABLE users ADD COLUMN username VARCHAR(100) UNIQUE
+        `);
+        
+        // Preenche com email se existir
+        await pool.query(`
+          UPDATE users SET username = email WHERE username IS NULL AND email IS NOT NULL
+        `);
+        
+        // Torna NOT NULL
+        await pool.query(`
+          ALTER TABLE users ALTER COLUMN username SET NOT NULL
+        `);
+        console.log('✅ Coluna username criada!');
+      }
+      
+      // ============================================================
+      // GARANTIR DEMAIS COLUNAS
+      // ============================================================
       const columns = [
-        { name: 'username', type: 'VARCHAR(100) UNIQUE' },
-        { name: 'password', type: 'VARCHAR(100) NOT NULL DEFAULT \'temp123\'' },
         { name: 'credits', type: 'INTEGER DEFAULT 0' },
         { name: 'name', type: 'VARCHAR(200)' },
         { name: 'status', type: 'VARCHAR(20) DEFAULT \'active\'' },
         { name: 'created_at', type: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' }
       ];
       
-      // Adiciona cada coluna se não existir
       for (const col of columns) {
         const check = await pool.query(`
           SELECT EXISTS (
@@ -160,16 +179,6 @@ async function setupDatabase() {
           await pool.query(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`);
         }
       }
-      
-      // Preenche username com email se existir
-      await pool.query(`
-        UPDATE users SET username = email WHERE username IS NULL AND email IS NOT NULL
-      `);
-      
-      // Torna username NOT NULL se necessário
-      await pool.query(`
-        ALTER TABLE users ALTER COLUMN username SET NOT NULL
-      `);
       
       console.log('✅ Colunas verificadas/adicionadas!');
     }
@@ -260,6 +269,11 @@ async function setupDatabase() {
       console.log('✅ Usuário admin criado!');
       console.log('   👤 Usuário: admin');
       console.log('   🔑 Senha: admin123');
+    } else {
+      // Atualiza a senha do admin se necessário
+      await pool.query(`
+        UPDATE users SET password = 'admin123' WHERE username = 'admin' AND password IS NULL
+      `);
     }
 
     // 7. Mostra estrutura atual da tabela
@@ -338,66 +352,7 @@ app.get('/api/debug/table-structure', async (req, res) => {
 });
 
 // ============================================================
-// 6. ROTA PARA REMOVER NOT NULL DO EMAIL (ESPECÍFICA)
-// ============================================================
-app.post('/api/admin/fix-email-notnull', async (req, res) => {
-  try {
-    console.log('🔧 Removendo NOT NULL da coluna email...');
-    
-    // Verifica se a coluna existe
-    const emailExists = await pool.query(`
-      SELECT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name = 'email'
-      )
-    `);
-    
-    if (!emailExists.rows[0].exists) {
-      // Cria a coluna email
-      await pool.query(`
-        ALTER TABLE users ADD COLUMN email VARCHAR(100)
-      `);
-      return res.json({
-        success: true,
-        message: '✅ Coluna email criada (permite NULL)'
-      });
-    }
-    
-    // Verifica se é NOT NULL
-    const emailNullable = await pool.query(`
-      SELECT is_nullable 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' AND column_name = 'email'
-    `);
-    
-    if (emailNullable.rows[0].is_nullable === 'NO') {
-      // Remove a restrição NOT NULL
-      await pool.query(`
-        ALTER TABLE users ALTER COLUMN email DROP NOT NULL
-      `);
-      
-      return res.json({
-        success: true,
-        message: '✅ Restrição NOT NULL removida da coluna email!'
-      });
-    } else {
-      return res.json({
-        success: true,
-        message: '✅ Coluna email já permite NULL'
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Erro:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// ============================================================
-// 7. ROTAS DE AUTENTICAÇÃO
+// 6. ROTAS DE AUTENTICAÇÃO
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -484,7 +439,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 8. ROTAS DE GALERIA (RESUMIDAS PARA ECONOMIZAR ESPAÇO)
+// 7. ROTAS DE GALERIA
 // ============================================================
 app.get('/api/gallery/list/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -655,7 +610,7 @@ app.post('/api/gallery/download', async (req, res) => {
 });
 
 // ============================================================
-// 9. ROTA PACOTE PERSONALIZADO
+// 8. ROTA PACOTE PERSONALIZADO
 // ============================================================
 app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
@@ -791,7 +746,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 10. WEBHOOK
+// 9. WEBHOOK
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -836,7 +791,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 11. ROTAS ADMIN
+// 10. ROTAS ADMIN
 // ============================================================
 
 // Middleware de autenticação admin
@@ -1132,7 +1087,7 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 12. INICIALIZAÇÃO DO SERVIDOR
+// 11. INICIALIZAÇÃO DO SERVIDOR
 // ============================================================
 const PORT = process.env.PORT || 3000;
 
