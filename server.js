@@ -29,14 +29,14 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. ROTAS DE AUTENTICAÇÃO (CORRIGIDAS)
+// 3. ROTAS DE AUTENTICAÇÃO (USANDO USERNAME)
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { username, password } = req.body;
   try {
-    // Busca APENAS por email
-    const query = 'SELECT * FROM users WHERE email = $1;';
-    const result = await pool.query(query, [email]);
+    // Busca por username
+    const query = 'SELECT * FROM users WHERE username = $1;';
+    const result = await pool.query(query, [username]);
     
     if (result.rows.length === 0) {
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
@@ -48,15 +48,15 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
     
-    const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
+    const token = Buffer.from(`${user.id}:${user.username}`).toString('base64');
     
     return res.json({
       success: true,
       token: token,
       user: {
         id: user.id,
-        name: user.name || user.email,
-        email: user.email,
+        username: user.username,
+        name: user.name || user.username,
         credits: user.credits
       }
     });
@@ -469,7 +469,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 7. ROTAS ADMIN (CORRIGIDAS - SEM USERNAME)
+// 7. ROTAS ADMIN (USANDO APENAS USERNAME)
 // ============================================================
 
 // Middleware de autenticação admin
@@ -502,13 +502,13 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
   }
 });
 
-// Listar usuários (CORRIGIDO)
+// Listar usuários
 app.get('/api/admin/users', authAdmin, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
         id, 
-        email AS username,
+        username,
         password, 
         credits, 
         status, 
@@ -524,34 +524,33 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
-// Criar usuário (CORRIGIDO)
+// Criar usuário (APENAS USERNAME E SENHA)
 app.post('/api/admin/users', authAdmin, async (req, res) => {
-  const { username, email, password, credits, name } = req.body;
+  const { username, password, credits, name } = req.body;
   
-  const userEmail = email || username;
-  
-  if (!userEmail || !password) {
+  if (!username || !password) {
     return res.status(400).json({ 
       success: false, 
-      message: 'Email e senha são obrigatórios.' 
+      message: 'Usuário e senha são obrigatórios.' 
     });
   }
   
   try {
+    // Verifica se o username já existe
     const existCheck = await pool.query(
-      'SELECT id FROM users WHERE email = $1', 
-      [userEmail]
+      'SELECT id FROM users WHERE username = $1', 
+      [username]
     );
     if (existCheck.rows.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Este email já está cadastrado.' 
+        message: 'Este usuário já existe. Escolha outro nome.' 
       });
     }
     
     const result = await pool.query(
-      'INSERT INTO users (email, password, credits, name) VALUES ($1, $2, $3, $4) RETURNING id',
-      [userEmail, password, credits || 0, name || userEmail]
+      'INSERT INTO users (username, password, credits, name) VALUES ($1, $2, $3, $4) RETURNING id',
+      [username, password, credits || 0, name || username]
     );
     
     res.json({ 
@@ -592,19 +591,19 @@ app.put('/api/admin/users/:id/password', authAdmin, async (req, res) => {
   }
 });
 
-// Atualizar usuário (CORRIGIDO)
+// Atualizar usuário
 app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
   const { id } = req.params;
-  const { email, password, credits, name } = req.body;
+  const { username, password, credits, name } = req.body;
   
   try {
     const updates = [];
     const values = [];
     let counter = 1;
     
-    if (email) {
-      updates.push(`email = $${counter}`);
-      values.push(email);
+    if (username) {
+      updates.push(`username = $${counter}`);
+      values.push(username);
       counter++;
     }
     if (password) {
