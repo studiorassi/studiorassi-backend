@@ -29,33 +29,33 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. ROTAS DE AUTENTICAÇÃO
+// 3. ROTAS DE AUTENTICAÇÃO (CORRIGIDAS)
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    // Busca por email (que pode ser username)
-    const query = 'SELECT * FROM users WHERE email = $1 OR username = $1;';
+    // Busca APENAS por email
+    const query = 'SELECT * FROM users WHERE email = $1;';
     const result = await pool.query(query, [email]);
+    
     if (result.rows.length === 0) {
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
     }
+    
     const user = result.rows[0];
+    
     if (user.password !== password) {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
     
-    // Usa username se existir, senão usa email
-    const identifier = user.username || user.email;
-    const token = Buffer.from(`${user.id}:${identifier}`).toString('base64');
+    const token = Buffer.from(`${user.id}:${user.email}`).toString('base64');
     
     return res.json({
       success: true,
       token: token,
       user: {
         id: user.id,
-        name: user.name || user.username || user.email,
-        username: user.username || user.email,
+        name: user.name || user.email,
         email: user.email,
         credits: user.credits
       }
@@ -72,14 +72,13 @@ const getUserByRequest = async (req) => {
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '');
       const decoded = Buffer.from(token, 'base64').toString('ascii');
-      const [userId, identifier] = decoded.split(':');
-      const resToken = await pool.query(
-        'SELECT * FROM users WHERE id = $1 OR email = $2 OR username = $2;', 
-        [userId, identifier]
-      );
+      const [userId] = decoded.split(':');
+      const resToken = await pool.query('SELECT * FROM users WHERE id = $1;', [userId]);
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('Erro ao extrair usuário do token:', e);
+  }
   
   const fallbackRes = await pool.query('SELECT * FROM users ORDER BY id DESC LIMIT 1;');
   return fallbackRes.rows.length > 0 ? fallbackRes.rows[0] : null;
@@ -118,7 +117,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTAS DE GALERIA (MANTIDAS IGUAIS)
+// 4. ROTAS DE GALERIA (MANTIDAS)
 // ============================================================
 app.get('/api/gallery/list/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -470,7 +469,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 7. ROTAS ADMIN (COMPATÍVEL COM A ESTRUTURA ATUAL)
+// 7. ROTAS ADMIN (CORRIGIDAS - SEM USERNAME)
 // ============================================================
 
 // Middleware de autenticação admin
@@ -503,19 +502,18 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
   }
 });
 
-// Listar usuários (compatível com a estrutura atual)
+// Listar usuários (CORRIGIDO)
 app.get('/api/admin/users', authAdmin, async (req, res) => {
   try {
-    // Tenta usar username se existir, senão usa email
     const result = await pool.query(`
       SELECT 
         id, 
-        COALESCE(username, email) as username,
+        email AS username,
         password, 
         credits, 
         status, 
         created_at,
-        email 
+        name
       FROM users 
       ORDER BY id DESC
     `);
@@ -526,54 +524,35 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
-// Criar usuário (compatível com a estrutura atual)
+// Criar usuário (CORRIGIDO)
 app.post('/api/admin/users', authAdmin, async (req, res) => {
-  const { username, password, credits } = req.body;
+  const { username, email, password, credits, name } = req.body;
   
-  if (!username || !password) {
+  const userEmail = email || username;
+  
+  if (!userEmail || !password) {
     return res.status(400).json({ 
       success: false, 
-      message: 'Usuário e senha são obrigatórios.' 
+      message: 'Email e senha são obrigatórios.' 
     });
   }
   
   try {
-    // Verifica se o username já existe (em email ou username)
     const existCheck = await pool.query(
-      'SELECT id FROM users WHERE email = $1 OR username = $1', 
-      [username]
+      'SELECT id FROM users WHERE email = $1', 
+      [userEmail]
     );
     if (existCheck.rows.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Usuário já existe. Escolha outro nome.' 
+        message: 'Este email já está cadastrado.' 
       });
     }
     
-    // Tenta inserir com username, se a coluna existir
-    // Verifica se a coluna username existe
-    const columnCheck = await pool.query(`
-      SELECT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name = 'username'
-      )
-    `);
-    const hasUsernameColumn = columnCheck.rows[0].exists;
-    
-    let result;
-    if (hasUsernameColumn) {
-      // Usa username e email (compatível com ambas as versões)
-      result = await pool.query(
-        'INSERT INTO users (username, email, password, credits, name) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-        [username, username, password, credits || 0, username]
-      );
-    } else {
-      // Usa apenas email (versão antiga)
-      result = await pool.query(
-        'INSERT INTO users (email, password, credits, name) VALUES ($1, $2, $3, $4) RETURNING id',
-        [username, password, credits || 0, username]
-      );
-    }
+    const result = await pool.query(
+      'INSERT INTO users (email, password, credits, name) VALUES ($1, $2, $3, $4) RETURNING id',
+      [userEmail, password, credits || 0, name || userEmail]
+    );
     
     res.json({ 
       success: true, 
@@ -613,33 +592,19 @@ app.put('/api/admin/users/:id/password', authAdmin, async (req, res) => {
   }
 });
 
-// Atualizar usuário
+// Atualizar usuário (CORRIGIDO)
 app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
   const { id } = req.params;
-  const { username, password, credits } = req.body;
+  const { email, password, credits, name } = req.body;
   
   try {
-    let query = 'UPDATE users SET ';
     const updates = [];
     const values = [];
     let counter = 1;
     
-    // Verifica se a coluna username existe
-    const columnCheck = await pool.query(`
-      SELECT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name = 'username'
-      )
-    `);
-    const hasUsernameColumn = columnCheck.rows[0].exists;
-    
-    if (username) {
-      if (hasUsernameColumn) {
-        updates.push(`username = $${counter}`);
-      } else {
-        updates.push(`email = $${counter}`);
-      }
-      values.push(username);
+    if (email) {
+      updates.push(`email = $${counter}`);
+      values.push(email);
       counter++;
     }
     if (password) {
@@ -652,6 +617,11 @@ app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
       values.push(credits);
       counter++;
     }
+    if (name) {
+      updates.push(`name = $${counter}`);
+      values.push(name);
+      counter++;
+    }
     
     if (updates.length === 0) {
       return res.status(400).json({ 
@@ -661,7 +631,7 @@ app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
     }
     
     values.push(id);
-    query += updates.join(', ') + ` WHERE id = $${counter}`;
+    const query = 'UPDATE users SET ' + updates.join(', ') + ` WHERE id = $${counter}`;
     
     await pool.query(query, values);
     res.json({ 
@@ -714,11 +684,31 @@ app.post('/api/admin/credits/add', authAdmin, async (req, res) => {
       });
     }
     
-    await pool.query(
-      `INSERT INTO transactions (user_id, amount, type, description, created_at) 
-       VALUES ($1, $2, 'admin_add', $3, NOW())`,
-      [userId, amount, reason || 'Adição manual']
-    );
+    // Cria tabela transactions se não existir
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS transactions (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id),
+          amount INTEGER,
+          type VARCHAR(50),
+          description TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (e) {
+      console.warn('⚠️ Tabela transactions já existe ou erro ao criar:', e.message);
+    }
+    
+    try {
+      await pool.query(
+        `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+         VALUES ($1, $2, 'admin_add', $3, NOW())`,
+        [userId, amount, reason || 'Adição manual']
+      );
+    } catch (e) {
+      console.warn('⚠️ Erro ao registrar transação:', e.message);
+    }
     
     res.json({ 
       success: true, 
@@ -758,11 +748,15 @@ app.post('/api/admin/credits/reset', authAdmin, async (req, res) => {
       [amount || 0, userId]
     );
     
-    await pool.query(
-      `INSERT INTO transactions (user_id, amount, type, description, created_at) 
-       VALUES ($1, $2, 'admin_reset', $3, NOW())`,
-      [userId, diff, reason || 'Reset manual']
-    );
+    try {
+      await pool.query(
+        `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+         VALUES ($1, $2, 'admin_reset', $3, NOW())`,
+        [userId, diff, reason || 'Reset manual']
+      );
+    } catch (e) {
+      console.warn('⚠️ Erro ao registrar transação:', e.message);
+    }
     
     res.json({ 
       success: true, 
