@@ -746,7 +746,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 9. WEBHOOK
+// 9. WEBHOOK - COM ADIÇÃO AUTOMÁTICA DE CRÉDITOS (MODIFICADO)
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -766,6 +766,125 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
       if (payment.status === 'approved') {
         const pedidoId = payment.external_reference;
         
+        console.log(`✅ Pagamento aprovado para o pedido: ${pedidoId}`);
+        
+        // ============================================================
+        // 🔥 BUSCA O PEDIDO PARA SABER QUANTOS CRÉDITOS
+        // ============================================================
+        const orderResult = await pool.query(
+          'SELECT fotos, cliente_email, cliente_nome FROM pedidos WHERE id = $1',
+          [pedidoId]
+        );
+        
+        if (orderResult.rows.length > 0) {
+          const creditsToAdd = orderResult.rows[0].fotos;
+          const clienteEmail = orderResult.rows[0].cliente_email;
+          const clienteNome = orderResult.rows[0].cliente_nome;
+          
+          console.log(`📊 Pedido encontrado: ${creditsToAdd} créditos para ${clienteEmail}`);
+          
+          // ============================================================
+          // 🔥 BUSCA O USUÁRIO PELO EMAIL
+          // ============================================================
+          let userResult = null;
+          
+          // Tenta buscar por email
+          if (clienteEmail) {
+            userResult = await pool.query(
+              'SELECT id, username, credits FROM users WHERE email = $1',
+              [clienteEmail]
+            );
+          }
+          
+          // Se não encontrou por email, tenta por username (fallback)
+          if (!userResult || userResult.rows.length === 0) {
+            // Tenta usar o nome do cliente como username
+            const possibleUsername = clienteNome ? clienteNome.toLowerCase().replace(/\s+/g, '') : null;
+            
+            if (possibleUsername) {
+              userResult = await pool.query(
+                'SELECT id, username, credits FROM users WHERE username = $1',
+                [possibleUsername]
+              );
+            }
+          }
+          
+          // Se ainda não encontrou, tenta buscar qualquer usuário com esse email no nome
+          if (!userResult || userResult.rows.length === 0) {
+            userResult = await pool.query(
+              "SELECT id, username, credits FROM users WHERE name ILIKE $1 OR username ILIKE $1",
+              [`%${clienteNome || ''}%`]
+            );
+          }
+          
+          if (userResult && userResult.rows.length > 0) {
+            const userId = userResult.rows[0].id;
+            const currentCredits = userResult.rows[0].credits;
+            const newCredits = currentCredits + creditsToAdd;
+            
+            // ============================================================
+            // 🔥 ADICIONA OS CRÉDITOS AUTOMATICAMENTE
+            // ============================================================
+            await pool.query(
+              'UPDATE users SET credits = credits + $1 WHERE id = $2',
+              [creditsToAdd, userId]
+            );
+            
+            console.log(`✅ ${creditsToAdd} créditos adicionados ao usuário ${userResult.rows[0].username}`);
+            console.log(`   💰 Saldo anterior: ${currentCredits} → Novo saldo: ${newCredits}`);
+            
+            // ============================================================
+            // 🔥 REGISTRA A TRANSAÇÃO
+            // ============================================================
+            try {
+              await pool.query(
+                `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+                 VALUES ($1, $2, 'purchase', $3, NOW())`,
+                [userId, creditsToAdd, `Compra de ${creditsToAdd} créditos via Mercado Pago - Pedido: ${pedidoId}`]
+              );
+              console.log(`📝 Transação registrada para o usuário ${userId}`);
+            } catch (txError) {
+              console.warn('⚠️ Erro ao registrar transação:', txError.message);
+            }
+            
+          } else {
+            console.log(`⚠️ Usuário NÃO encontrado para o pedido ${pedidoId}`);
+            console.log(`   Email: ${clienteEmail}`);
+            console.log(`   Nome: ${clienteNome}`);
+            
+            // ============================================================
+            // 🔥 CRIA UM NOVO USUÁRIO AUTOMATICAMENTE (OPCIONAL)
+            // ============================================================
+            // Se quiser criar o usuário automaticamente, descomente este bloco:
+            /*
+            if (clienteEmail) {
+              const newUsername = clienteEmail.split('@')[0];
+              const newPassword = Math.random().toString(36).slice(-8);
+              
+              const newUser = await pool.query(
+                'INSERT INTO users (username, password, credits, name, email) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+                [newUsername, newPassword, creditsToAdd, clienteNome || newUsername, clienteEmail]
+              );
+              
+              console.log(`✅ Usuário criado automaticamente: ${newUsername}`);
+              console.log(`   🔑 Senha: ${newPassword}`);
+              
+              // Registrar transação
+              await pool.query(
+                `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+                 VALUES ($1, $2, 'purchase', $3, NOW())`,
+                [newUser.rows[0].id, creditsToAdd, `Compra de ${creditsToAdd} créditos via Mercado Pago - Pedido: ${pedidoId}`]
+              );
+            }
+            */
+          }
+        } else {
+          console.log(`⚠️ Pedido não encontrado: ${pedidoId}`);
+        }
+        
+        // ============================================================
+        // 🔥 ATUALIZA O STATUS DO PEDIDO
+        // ============================================================
         await pool.query(`
           UPDATE pedidos 
           SET status = 'confirmado', payment_status = 'approved', payment_id = $1
@@ -778,7 +897,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
           WHERE pedido_id = $1
         `, [pedidoId]);
         
-        console.log(`✅ Pagamento confirmado para o pedido ${pedidoId}`);
+        console.log(`✅ Pedido ${pedidoId} confirmado com sucesso!`);
       }
     }
     
