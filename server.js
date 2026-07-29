@@ -29,13 +29,13 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. ROTAS DE AUTENTICAÇÃO (USANDO USERNAME)
+// 3. ROTAS DE AUTENTICAÇÃO
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    // Busca por username (campo 'email' no frontend = username no banco)
-    const query = 'SELECT * FROM users WHERE username = $1;';
+    // Busca por email (que pode ser username)
+    const query = 'SELECT * FROM users WHERE email = $1 OR username = $1;';
     const result = await pool.query(query, [email]);
     if (result.rows.length === 0) {
       return res.status(401).json({ success: false, message: 'Usuário não encontrado.' });
@@ -44,14 +44,19 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.password !== password) {
       return res.status(401).json({ success: false, message: 'Senha incorreta.' });
     }
-    const token = Buffer.from(`${user.id}:${user.username}`).toString('base64');
+    
+    // Usa username se existir, senão usa email
+    const identifier = user.username || user.email;
+    const token = Buffer.from(`${user.id}:${identifier}`).toString('base64');
+    
     return res.json({
       success: true,
       token: token,
       user: {
         id: user.id,
-        name: user.username || 'Cliente',
-        username: user.username,
+        name: user.name || user.username || user.email,
+        username: user.username || user.email,
+        email: user.email,
         credits: user.credits
       }
     });
@@ -67,8 +72,11 @@ const getUserByRequest = async (req) => {
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '');
       const decoded = Buffer.from(token, 'base64').toString('ascii');
-      const [userId, username] = decoded.split(':');
-      const resToken = await pool.query('SELECT * FROM users WHERE id = $1 OR username = $2;', [userId, username]);
+      const [userId, identifier] = decoded.split(':');
+      const resToken = await pool.query(
+        'SELECT * FROM users WHERE id = $1 OR email = $2 OR username = $2;', 
+        [userId, identifier]
+      );
       if (resToken.rows.length > 0) return resToken.rows[0];
     }
   } catch (e) {}
@@ -110,7 +118,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTA DE LISTAGEM - CLIENTES
+// 4. ROTAS DE GALERIA (MANTIDAS IGUAIS)
 // ============================================================
 app.get('/api/gallery/list/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -145,9 +153,6 @@ app.get('/api/gallery/list/:folder', async (req, res) => {
   }
 });
 
-// ============================================================
-// 5. ROTA DE LISTAGEM - FORNECEDOR
-// ============================================================
 app.get('/api/gallery/list/fornecedor/:folder', async (req, res) => {
   const { folder } = req.params;
   const bucketName = BUCKET_FORNECEDOR;
@@ -181,9 +186,6 @@ app.get('/api/gallery/list/fornecedor/:folder', async (req, res) => {
   }
 });
 
-// ============================================================
-// 6. ROTA DE VISUALIZAÇÃO - CLIENTES
-// ============================================================
 app.get('/api/gallery/view/*', (req, res) => {
   const filePath = req.params[0];
   
@@ -201,9 +203,6 @@ app.get('/api/gallery/view/*', (req, res) => {
   }
 });
 
-// ============================================================
-// 7. ROTA DE VISUALIZAÇÃO - FORNECEDOR
-// ============================================================
 app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
   const { folder } = req.params;
   const filePath = req.params[0];
@@ -225,9 +224,6 @@ app.get('/api/gallery/view/fornecedor/:folder/*', (req, res) => {
   }
 });
 
-// ============================================================
-// 8. ROTA DE THUMBNAIL - FORNECEDOR
-// ============================================================
 app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) => {
   const { folder, filename } = req.params;
   const bucketName = BUCKET_FORNECEDOR;
@@ -270,9 +266,6 @@ app.get('/api/gallery/thumbnail/fornecedor/:folder/:filename', async (req, res) 
   }
 });
 
-// ============================================================
-// 9. ROTA DE DOWNLOAD
-// ============================================================
 app.post('/api/gallery/download', async (req, res) => {
   const { imageKeys } = req.body;
   
@@ -296,7 +289,7 @@ app.post('/api/gallery/download', async (req, res) => {
 });
 
 // ============================================================
-// 10. ROTA PARA PACOTE PERSONALIZADO (MERCADO PAGO)
+// 5. ROTA PACOTE PERSONALIZADO
 // ============================================================
 app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
@@ -432,7 +425,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 11. WEBHOOK DO MERCADO PAGO
+// 6. WEBHOOK
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -477,7 +470,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 12. ROTAS ADMIN (ATUALIZADAS COM USERNAME)
+// 7. ROTAS ADMIN (COMPATÍVEL COM A ESTRUTURA ATUAL)
 // ============================================================
 
 // Middleware de autenticação admin
@@ -510,12 +503,22 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
   }
 });
 
-// Listar usuários (com username)
+// Listar usuários (compatível com a estrutura atual)
 app.get('/api/admin/users', authAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, username, password, credits, status, created_at FROM users ORDER BY id DESC'
-    );
+    // Tenta usar username se existir, senão usa email
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        COALESCE(username, email) as username,
+        password, 
+        credits, 
+        status, 
+        created_at,
+        email 
+      FROM users 
+      ORDER BY id DESC
+    `);
     res.json({ success: true, users: result.rows });
   } catch (error) {
     console.error('❌ Erro ao listar usuários:', error);
@@ -523,7 +526,7 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
-// Criar usuário (apenas username + password + credits)
+// Criar usuário (compatível com a estrutura atual)
 app.post('/api/admin/users', authAdmin, async (req, res) => {
   const { username, password, credits } = req.body;
   
@@ -535,8 +538,11 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
   
   try {
-    // Verificar se usuário já existe
-    const existCheck = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    // Verifica se o username já existe (em email ou username)
+    const existCheck = await pool.query(
+      'SELECT id FROM users WHERE email = $1 OR username = $1', 
+      [username]
+    );
     if (existCheck.rows.length > 0) {
       return res.status(400).json({ 
         success: false, 
@@ -544,10 +550,30 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
       });
     }
     
-    const result = await pool.query(
-      'INSERT INTO users (username, password, credits) VALUES ($1, $2, $3) RETURNING id',
-      [username, password, credits || 0]
-    );
+    // Tenta inserir com username, se a coluna existir
+    // Verifica se a coluna username existe
+    const columnCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'username'
+      )
+    `);
+    const hasUsernameColumn = columnCheck.rows[0].exists;
+    
+    let result;
+    if (hasUsernameColumn) {
+      // Usa username e email (compatível com ambas as versões)
+      result = await pool.query(
+        'INSERT INTO users (username, email, password, credits, name) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+        [username, username, password, credits || 0, username]
+      );
+    } else {
+      // Usa apenas email (versão antiga)
+      result = await pool.query(
+        'INSERT INTO users (email, password, credits, name) VALUES ($1, $2, $3, $4) RETURNING id',
+        [username, password, credits || 0, username]
+      );
+    }
     
     res.json({ 
       success: true, 
@@ -598,8 +624,21 @@ app.put('/api/admin/users/:id', authAdmin, async (req, res) => {
     const values = [];
     let counter = 1;
     
+    // Verifica se a coluna username existe
+    const columnCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'username'
+      )
+    `);
+    const hasUsernameColumn = columnCheck.rows[0].exists;
+    
     if (username) {
-      updates.push(`username = $${counter}`);
+      if (hasUsernameColumn) {
+        updates.push(`username = $${counter}`);
+      } else {
+        updates.push(`email = $${counter}`);
+      }
       values.push(username);
       counter++;
     }
@@ -749,7 +788,7 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 13. INICIALIZAÇÃO DO SERVIDOR
+// 8. INICIALIZAÇÃO DO SERVIDOR
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
