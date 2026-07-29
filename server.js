@@ -29,7 +29,154 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. ROTAS DE AUTENTICAÇÃO (USANDO USERNAME)
+// 3. FUNÇÃO PARA CRIAR/ATUALIZAR TABELA USERS (AUTOMÁTICO)
+// ============================================================
+async function setupDatabase() {
+  console.log('🔍 Verificando estrutura do banco de dados...');
+  
+  try {
+    // 1. Cria a tabela users se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) UNIQUE,
+        password VARCHAR(100) NOT NULL,
+        credits INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'active',
+        name VARCHAR(200),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Tabela users verificada/criada');
+
+    // 2. Verifica se a coluna username existe
+    const columnCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'username'
+      )
+    `);
+    
+    if (!columnCheck.rows[0].exists) {
+      console.log('📦 Adicionando coluna username...');
+      await pool.query(`
+        ALTER TABLE users ADD COLUMN username VARCHAR(100) UNIQUE
+      `);
+      
+      // Preenche username com email se existir
+      await pool.query(`
+        UPDATE users SET username = email WHERE username IS NULL AND email IS NOT NULL
+      `);
+      
+      // Torna NOT NULL
+      await pool.query(`
+        ALTER TABLE users ALTER COLUMN username SET NOT NULL
+      `);
+      console.log('✅ Coluna username adicionada com sucesso!');
+    }
+
+    // 3. Verifica se a coluna name existe
+    const nameCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'name'
+      )
+    `);
+    
+    if (!nameCheck.rows[0].exists) {
+      console.log('📦 Adicionando coluna name...');
+      await pool.query(`
+        ALTER TABLE users ADD COLUMN name VARCHAR(200)
+      `);
+      console.log('✅ Coluna name adicionada com sucesso!');
+    }
+
+    // 4. Verifica se a coluna email existe (para compatibilidade)
+    const emailCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'email'
+      )
+    `);
+    
+    if (!emailCheck.rows[0].exists) {
+      console.log('📦 Adicionando coluna email (opcional)...');
+      await pool.query(`
+        ALTER TABLE users ADD COLUMN email VARCHAR(100) UNIQUE
+      `);
+      console.log('✅ Coluna email adicionada com sucesso!');
+    }
+
+    // 5. Cria tabela pedidos se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pedidos (
+        id VARCHAR(50) PRIMARY KEY,
+        cliente_nome VARCHAR(100),
+        cliente_email VARCHAR(100),
+        fotos INTEGER,
+        addons JSONB,
+        data_ensaio DATE,
+        horario_ensaio TIME,
+        total DECIMAL(10,2),
+        status VARCHAR(20) DEFAULT 'pendente',
+        payment_id VARCHAR(100),
+        payment_status VARCHAR(20),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Tabela pedidos verificada/criada');
+
+    // 6. Cria tabela agendamentos se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS agendamentos (
+        id SERIAL PRIMARY KEY,
+        pedido_id VARCHAR(50) REFERENCES pedidos(id),
+        data DATE,
+        horario TIME,
+        status VARCHAR(20) DEFAULT 'pendente',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Tabela agendamentos verificada/criada');
+
+    // 7. Cria tabela transactions se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        amount INTEGER,
+        type VARCHAR(50),
+        description TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Tabela transactions verificada/criada');
+
+    // 8. Cria usuário admin padrão (se não existir)
+    const adminCheck = await pool.query(`
+      SELECT id FROM users WHERE username = 'admin'
+    `);
+    
+    if (adminCheck.rows.length === 0) {
+      console.log('👤 Criando usuário admin padrão...');
+      await pool.query(`
+        INSERT INTO users (username, password, credits, name, status)
+        VALUES ('admin', 'admin123', 999, 'Administrador', 'active')
+      `);
+      console.log('✅ Usuário admin criado!');
+      console.log('   👤 Usuário: admin');
+      console.log('   🔑 Senha: admin123');
+    }
+
+    console.log('✅ Banco de dados configurado com sucesso!');
+    
+  } catch (error) {
+    console.error('❌ Erro ao configurar banco de dados:', error);
+  }
+}
+
+// ============================================================
+// 4. ROTAS DE AUTENTICAÇÃO
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -117,7 +264,7 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 4. ROTAS DE GALERIA (MANTIDAS)
+// 5. ROTAS DE GALERIA
 // ============================================================
 app.get('/api/gallery/list/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -288,7 +435,7 @@ app.post('/api/gallery/download', async (req, res) => {
 });
 
 // ============================================================
-// 5. ROTA PACOTE PERSONALIZADO
+// 6. ROTA PACOTE PERSONALIZADO
 // ============================================================
 app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
@@ -424,7 +571,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 6. WEBHOOK
+// 7. WEBHOOK
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -469,7 +616,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 7. ROTAS ADMIN (USANDO APENAS USERNAME)
+// 8. ROTAS ADMIN
 // ============================================================
 
 // Middleware de autenticação admin
@@ -524,7 +671,7 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
-// Criar usuário (APENAS USERNAME E SENHA)
+// Criar usuário
 app.post('/api/admin/users', authAdmin, async (req, res) => {
   const { username, password, credits, name } = req.body;
   
@@ -536,7 +683,6 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
   
   try {
-    // Verifica se o username já existe
     const existCheck = await pool.query(
       'SELECT id FROM users WHERE username = $1', 
       [username]
@@ -683,22 +829,6 @@ app.post('/api/admin/credits/add', authAdmin, async (req, res) => {
       });
     }
     
-    // Cria tabela transactions se não existir
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS transactions (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER REFERENCES users(id),
-          amount INTEGER,
-          type VARCHAR(50),
-          description TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-    } catch (e) {
-      console.warn('⚠️ Tabela transactions já existe ou erro ao criar:', e.message);
-    }
-    
     try {
       await pool.query(
         `INSERT INTO transactions (user_id, amount, type, description, created_at) 
@@ -781,14 +911,22 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 8. INICIALIZAÇÃO DO SERVIDOR
+// 9. INICIALIZAÇÃO DO SERVIDOR
 // ============================================================
 const PORT = process.env.PORT || 3000;
+
+// Inicializa o servidor APÓS configurar o banco
 app.listen(PORT, async () => {
-  console.log(`🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
+  await setupDatabase();
+  
+  console.log(`\n🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
   console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
   console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
   console.log('✅ Sistema de créditos funcionando sem reset automático.');
   console.log('📦 Rota /api/pacote/personalizado ativa!');
   console.log('🔐 Rotas Admin ativas com autenticação.');
+  console.log('👤 Login usando APENAS usuário e senha!');
+  console.log('\n📋 Credenciais Admin:');
+  console.log('   👤 Usuário: admin');
+  console.log('   🔑 Senha: admin123\n');
 });
