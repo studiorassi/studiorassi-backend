@@ -29,7 +29,7 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 const BUCKET_FORNECEDOR = process.env.S3_BUCKET_FORNECEDOR || 'studio-rassi-fornecedor-2026';
 
 // ============================================================
-// 3. FUNÇÃO PARA CRIAR/CORRIGIR TABELA USERS (AUTOMÁTICO)
+// 3. FUNÇÃO PARA CRIAR/CORRIGIR TABELA USERS
 // ============================================================
 async function setupDatabase() {
   console.log('🔍 Verificando estrutura do banco de dados...');
@@ -98,7 +98,34 @@ async function setupDatabase() {
       console.log('✅ Colunas verificadas/adicionadas!');
     }
     
-    // 2. Cria tabela pedidos se não existir
+    // 2. CORRIGIR A SEQUÊNCIA DA TABELA USERS
+    console.log('🔧 Verificando sequência da tabela users...');
+    
+    const seqCheck = await pool.query(`
+      SELECT nextval(pg_get_serial_sequence('users', 'id')) as next_id
+    `);
+    
+    const maxIdCheck = await pool.query(`
+      SELECT COALESCE(MAX(id), 0) as max_id FROM users
+    `);
+    
+    const nextId = parseInt(seqCheck.rows[0].next_id);
+    const maxId = parseInt(maxIdCheck.rows[0].max_id);
+    
+    console.log(`   📊 Próximo ID da sequência: ${nextId}`);
+    console.log(`   📊 Maior ID atual: ${maxId}`);
+    
+    if (nextId <= maxId) {
+      const newSeq = maxId + 1;
+      await pool.query(`
+        SELECT setval(pg_get_serial_sequence('users', 'id'), ${newSeq})
+      `);
+      console.log(`   ✅ Sequência ajustada para: ${newSeq}`);
+    } else {
+      console.log('   ✅ Sequência já está correta');
+    }
+
+    // 3. Cria tabela pedidos se não existir
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pedidos (
         id VARCHAR(50) PRIMARY KEY,
@@ -117,7 +144,7 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela pedidos verificada/criada');
 
-    // 3. Cria tabela agendamentos se não existir
+    // 4. Cria tabela agendamentos se não existir
     await pool.query(`
       CREATE TABLE IF NOT EXISTS agendamentos (
         id SERIAL PRIMARY KEY,
@@ -130,7 +157,7 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela agendamentos verificada/criada');
 
-    // 4. Cria tabela transactions se não existir
+    // 5. Cria tabela transactions se não existir
     await pool.query(`
       CREATE TABLE IF NOT EXISTS transactions (
         id SERIAL PRIMARY KEY,
@@ -143,7 +170,7 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela transactions verificada/criada');
 
-    // 5. Cria usuário admin padrão (se não existir)
+    // 6. Cria usuário admin padrão (se não existir)
     const adminCheck = await pool.query(`
       SELECT id FROM users WHERE username = 'admin'
     `);
@@ -159,7 +186,7 @@ async function setupDatabase() {
       console.log('   🔑 Senha: admin123');
     }
 
-    // 6. Mostra estrutura atual da tabela
+    // 7. Mostra estrutura atual da tabela
     const structure = await pool.query(`
       SELECT column_name, data_type 
       FROM information_schema.columns 
@@ -180,27 +207,7 @@ async function setupDatabase() {
 }
 
 // ============================================================
-// 4. ROTA DE DIAGNÓSTICO
-// ============================================================
-app.get('/api/debug/table-structure', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT column_name, data_type, is_nullable 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' 
-      ORDER BY ordinal_position
-    `);
-    res.json({
-      success: true,
-      columns: result.rows
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ============================================================
-// 5. ROTA DE REPARO (EMERGÊNCIA)
+// 4. ROTA DE REPARO (EMERGÊNCIA)
 // ============================================================
 app.post('/api/admin/fix-users-table', async (req, res) => {
   try {
@@ -232,12 +239,31 @@ app.post('/api/admin/fix-users-table', async (req, res) => {
 });
 
 // ============================================================
+// 5. ROTA DE DIAGNÓSTICO
+// ============================================================
+app.get('/api/debug/table-structure', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT column_name, data_type, is_nullable 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' 
+      ORDER BY ordinal_position
+    `);
+    res.json({
+      success: true,
+      columns: result.rows
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================
 // 6. ROTAS DE AUTENTICAÇÃO
 // ============================================================
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   try {
-    // Busca por username
     const query = 'SELECT * FROM users WHERE username = $1;';
     const result = await pool.query(query, [username]);
     
