@@ -500,3 +500,102 @@ app.listen(PORT, async () => {
   console.log('✅ Sistema de créditos funcionando sem reset automático.');
   console.log('📦 Rota /api/pacote/personalizado ativa!');
 });
+
+// ============================================================
+// ROTAS ADMIN
+// ============================================================
+
+// Middleware de autenticação admin
+const authAdmin = (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  // Validação simples - melhor usar JWT
+  if (token === 'admin-token-simples') {
+    next();
+  } else {
+    res.status(401).json({ success: false, message: 'Não autorizado' });
+  }
+};
+
+// Estatísticas
+app.get('/api/admin/stats', authAdmin, async (req, res) => {
+  try {
+    const users = await pool.query('SELECT COUNT(*) FROM users');
+    const credits = await pool.query('SELECT SUM(credits) FROM users');
+    const orders = await pool.query('SELECT COUNT(*) FROM pedidos');
+    
+    res.json({
+      success: true,
+      users: users.rows[0].count,
+      credits: credits.rows[0].sum || 0,
+      orders: orders.rows[0].count,
+      photos: 116 // ou buscar do S3
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Listar usuários
+app.get('/api/admin/users', authAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, email, credits, status FROM users ORDER BY id DESC');
+    res.json({ success: true, users: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Criar usuário
+app.post('/api/admin/users', authAdmin, async (req, res) => {
+  const { name, email, password, credits } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO users (name, email, password, credits) VALUES ($1, $2, $3, $4) RETURNING id',
+      [name, email, password, credits || 0]
+    );
+    res.json({ success: true, id: result.rows[0].id });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Adicionar créditos
+app.post('/api/admin/credits/add', authAdmin, async (req, res) => {
+  const { userId, amount, reason } = req.body;
+  try {
+    await pool.query(
+      'UPDATE users SET credits = credits + $1 WHERE id = $2',
+      [amount, userId]
+    );
+    // Registrar transação
+    await pool.query(
+      'INSERT INTO transactions (user_id, amount, type, description) VALUES ($1, $2, $3, $4)',
+      [userId, amount, 'admin_add', reason || 'Adição manual']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Resetar créditos
+app.post('/api/admin/credits/reset', authAdmin, async (req, res) => {
+  const { userId, amount, reason } = req.body;
+  try {
+    // Obter créditos atuais
+    const current = await pool.query('SELECT credits FROM users WHERE id = $1', [userId]);
+    const diff = amount - (current.rows[0]?.credits || 0);
+    
+    await pool.query(
+      'UPDATE users SET credits = $1 WHERE id = $2',
+      [amount, userId]
+    );
+    await pool.query(
+      'INSERT INTO transactions (user_id, amount, type, description) VALUES ($1, $2, $3, $4)',
+      [userId, diff, 'admin_reset', reason || 'Reset manual']
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
