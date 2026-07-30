@@ -1005,6 +1005,62 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
+// Adicione esta rota no server.js
+app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
+  const { userId } = req.body;
+  
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'Usuário não informado.' });
+  }
+  
+  try {
+    // Busca o usuário para saber o username
+    const userResult = await pool.query(
+      'SELECT username FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+    
+    const username = userResult.rows[0].username;
+    
+    // 🔥 Opção 1: Se você usa localStorage no frontend, o reset é feito lá
+    // O backend apenas registra a ação
+    
+    // 🔥 Opção 2: Se você tem uma tabela de downloads no banco
+    // const result = await pool.query(
+    //   'DELETE FROM downloads WHERE user_id = $1',
+    //   [userId]
+    // );
+    
+    // Registra a ação no log
+    console.log(`🔄 Downloads resetados para o usuário ${username} (ID: ${userId})`);
+    
+    // Registra a transação
+    try {
+      await pool.query(
+        `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+         VALUES ($1, $2, 'admin_reset_downloads', $3, NOW())`,
+        [userId, 0, `Reset de downloads pelo admin`]
+      );
+    } catch (e) {
+      console.warn('⚠️ Erro ao registrar transação:', e.message);
+    }
+    
+    res.json({
+      success: true,
+      message: `Downloads resetados para o usuário ${username}`,
+      resetCount: 0 // ou result.rowCount se tiver tabela
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao resetar downloads:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Atualizar senha do usuário
 app.put('/api/admin/users/:id/password', authAdmin, async (req, res) => {
   const { id } = req.params;
