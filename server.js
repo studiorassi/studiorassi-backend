@@ -144,10 +144,12 @@ async function setupDatabase() {
           ALTER TABLE users ADD COLUMN username VARCHAR(100) UNIQUE
         `);
         
+        // Preenche com email se existir
         await pool.query(`
           UPDATE users SET username = email WHERE username IS NULL AND email IS NOT NULL
         `);
         
+        // Torna NOT NULL
         await pool.query(`
           ALTER TABLE users ALTER COLUMN username SET NOT NULL
         `);
@@ -280,6 +282,7 @@ async function setupDatabase() {
       console.log('   👤 Usuário: admin');
       console.log('   🔑 Senha: admin123');
     } else {
+      // Atualiza a senha do admin se necessário
       await pool.query(`
         UPDATE users SET password = 'admin123' WHERE username = 'admin' AND password IS NULL
       `);
@@ -867,6 +870,7 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
   
   try {
+    // Verifica se o username já existe
     const existCheck = await pool.query(
       'SELECT id FROM users WHERE username = $1', 
       [username]
@@ -1095,7 +1099,7 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 11. ROTAS DE RESET DE DOWNLOADS
+// 11. ROTAS DE RESET DE DOWNLOADS (NOVAS)
 // ============================================================
 
 // RESETAR DOWNLOADS DO USUÁRIO (ADMIN)
@@ -1107,6 +1111,7 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
   }
   
   try {
+    // Busca o usuário
     const userResult = await pool.query(
       'SELECT id, username FROM users WHERE id = $1',
       [userId]
@@ -1118,6 +1123,7 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
     
     const username = userResult.rows[0].username;
     
+    // Registra o reset na tabela user_resets
     await pool.query(
       `INSERT INTO user_resets (user_id, reset_type, performed_by) 
        VALUES ($1, 'downloads', $2)`,
@@ -1126,6 +1132,7 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
     
     console.log(`🔄 Downloads resetados para o usuário ${username} (ID: ${userId})`);
     
+    // Registra a transação
     try {
       await pool.query(
         `INSERT INTO transactions (user_id, amount, type, description, created_at) 
@@ -1149,11 +1156,12 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
   }
 });
 
-// VERIFICAR SE HOUVE RESET PARA UM USUÁRIO
+// VERIFICAR SE HOUVE RESET PARA UM USUÁRIO (FRONTEND)
 app.get('/api/auth/check-reset/:username', async (req, res) => {
   const { username } = req.params;
   
   try {
+    // Busca o usuário
     const userResult = await pool.query(
       'SELECT id FROM users WHERE username = $1',
       [username]
@@ -1165,6 +1173,7 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
     
     const userId = userResult.rows[0].id;
     
+    // Verifica se houve reset nos últimos 7 dias
     const resetResult = await pool.query(
       `SELECT id, reset_at FROM user_resets 
        WHERE user_id = $1 AND reset_type = 'downloads' 
@@ -1177,6 +1186,7 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
       const now = new Date();
       const diffHours = (now - resetAt) / (1000 * 60 * 60);
       
+      // Se o reset foi nas últimas 168 horas (7 dias), considera que houve reset
       if (diffHours < 168) {
         return res.json({
           success: true,
