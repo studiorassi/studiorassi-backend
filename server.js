@@ -144,12 +144,10 @@ async function setupDatabase() {
           ALTER TABLE users ADD COLUMN username VARCHAR(100) UNIQUE
         `);
         
-        // Preenche com email se existir
         await pool.query(`
           UPDATE users SET username = email WHERE username IS NULL AND email IS NOT NULL
         `);
         
-        // Torna NOT NULL
         await pool.query(`
           ALTER TABLE users ALTER COLUMN username SET NOT NULL
         `);
@@ -255,7 +253,19 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela transactions verificada/criada');
 
-    // 6. Cria usuário admin padrão (se não existir)
+    // 6. Cria tabela user_resets para controle de reset de downloads
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_resets (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        reset_type VARCHAR(50) DEFAULT 'downloads',
+        reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        performed_by INTEGER REFERENCES users(id)
+      )
+    `);
+    console.log('✅ Tabela user_resets verificada/criada');
+
+    // 7. Cria usuário admin padrão (se não existir)
     const adminCheck = await pool.query(`
       SELECT id FROM users WHERE username = 'admin'
     `);
@@ -270,13 +280,12 @@ async function setupDatabase() {
       console.log('   👤 Usuário: admin');
       console.log('   🔑 Senha: admin123');
     } else {
-      // Atualiza a senha do admin se necessário
       await pool.query(`
         UPDATE users SET password = 'admin123' WHERE username = 'admin' AND password IS NULL
       `);
     }
 
-    // 7. Mostra estrutura atual da tabela
+    // 8. Mostra estrutura atual da tabela
     const structure = await pool.query(`
       SELECT column_name, data_type, is_nullable
       FROM information_schema.columns 
@@ -746,7 +755,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 9. WEBHOOK - COM ADIÇÃO AUTOMÁTICA DE CRÉDITOS (MODIFICADO)
+// 9. WEBHOOK
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -766,125 +775,6 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
       if (payment.status === 'approved') {
         const pedidoId = payment.external_reference;
         
-        console.log(`✅ Pagamento aprovado para o pedido: ${pedidoId}`);
-        
-        // ============================================================
-        // 🔥 BUSCA O PEDIDO PARA SABER QUANTOS CRÉDITOS
-        // ============================================================
-        const orderResult = await pool.query(
-          'SELECT fotos, cliente_email, cliente_nome FROM pedidos WHERE id = $1',
-          [pedidoId]
-        );
-        
-        if (orderResult.rows.length > 0) {
-          const creditsToAdd = orderResult.rows[0].fotos;
-          const clienteEmail = orderResult.rows[0].cliente_email;
-          const clienteNome = orderResult.rows[0].cliente_nome;
-          
-          console.log(`📊 Pedido encontrado: ${creditsToAdd} créditos para ${clienteEmail}`);
-          
-          // ============================================================
-          // 🔥 BUSCA O USUÁRIO PELO EMAIL
-          // ============================================================
-          let userResult = null;
-          
-          // Tenta buscar por email
-          if (clienteEmail) {
-            userResult = await pool.query(
-              'SELECT id, username, credits FROM users WHERE email = $1',
-              [clienteEmail]
-            );
-          }
-          
-          // Se não encontrou por email, tenta por username (fallback)
-          if (!userResult || userResult.rows.length === 0) {
-            // Tenta usar o nome do cliente como username
-            const possibleUsername = clienteNome ? clienteNome.toLowerCase().replace(/\s+/g, '') : null;
-            
-            if (possibleUsername) {
-              userResult = await pool.query(
-                'SELECT id, username, credits FROM users WHERE username = $1',
-                [possibleUsername]
-              );
-            }
-          }
-          
-          // Se ainda não encontrou, tenta buscar qualquer usuário com esse email no nome
-          if (!userResult || userResult.rows.length === 0) {
-            userResult = await pool.query(
-              "SELECT id, username, credits FROM users WHERE name ILIKE $1 OR username ILIKE $1",
-              [`%${clienteNome || ''}%`]
-            );
-          }
-          
-          if (userResult && userResult.rows.length > 0) {
-            const userId = userResult.rows[0].id;
-            const currentCredits = userResult.rows[0].credits;
-            const newCredits = currentCredits + creditsToAdd;
-            
-            // ============================================================
-            // 🔥 ADICIONA OS CRÉDITOS AUTOMATICAMENTE
-            // ============================================================
-            await pool.query(
-              'UPDATE users SET credits = credits + $1 WHERE id = $2',
-              [creditsToAdd, userId]
-            );
-            
-            console.log(`✅ ${creditsToAdd} créditos adicionados ao usuário ${userResult.rows[0].username}`);
-            console.log(`   💰 Saldo anterior: ${currentCredits} → Novo saldo: ${newCredits}`);
-            
-            // ============================================================
-            // 🔥 REGISTRA A TRANSAÇÃO
-            // ============================================================
-            try {
-              await pool.query(
-                `INSERT INTO transactions (user_id, amount, type, description, created_at) 
-                 VALUES ($1, $2, 'purchase', $3, NOW())`,
-                [userId, creditsToAdd, `Compra de ${creditsToAdd} créditos via Mercado Pago - Pedido: ${pedidoId}`]
-              );
-              console.log(`📝 Transação registrada para o usuário ${userId}`);
-            } catch (txError) {
-              console.warn('⚠️ Erro ao registrar transação:', txError.message);
-            }
-            
-          } else {
-            console.log(`⚠️ Usuário NÃO encontrado para o pedido ${pedidoId}`);
-            console.log(`   Email: ${clienteEmail}`);
-            console.log(`   Nome: ${clienteNome}`);
-            
-            // ============================================================
-            // 🔥 CRIA UM NOVO USUÁRIO AUTOMATICAMENTE (OPCIONAL)
-            // ============================================================
-            // Se quiser criar o usuário automaticamente, descomente este bloco:
-            /*
-            if (clienteEmail) {
-              const newUsername = clienteEmail.split('@')[0];
-              const newPassword = Math.random().toString(36).slice(-8);
-              
-              const newUser = await pool.query(
-                'INSERT INTO users (username, password, credits, name, email) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-                [newUsername, newPassword, creditsToAdd, clienteNome || newUsername, clienteEmail]
-              );
-              
-              console.log(`✅ Usuário criado automaticamente: ${newUsername}`);
-              console.log(`   🔑 Senha: ${newPassword}`);
-              
-              // Registrar transação
-              await pool.query(
-                `INSERT INTO transactions (user_id, amount, type, description, created_at) 
-                 VALUES ($1, $2, 'purchase', $3, NOW())`,
-                [newUser.rows[0].id, creditsToAdd, `Compra de ${creditsToAdd} créditos via Mercado Pago - Pedido: ${pedidoId}`]
-              );
-            }
-            */
-          }
-        } else {
-          console.log(`⚠️ Pedido não encontrado: ${pedidoId}`);
-        }
-        
-        // ============================================================
-        // 🔥 ATUALIZA O STATUS DO PEDIDO
-        // ============================================================
         await pool.query(`
           UPDATE pedidos 
           SET status = 'confirmado', payment_status = 'approved', payment_id = $1
@@ -897,7 +787,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
           WHERE pedido_id = $1
         `, [pedidoId]);
         
-        console.log(`✅ Pedido ${pedidoId} confirmado com sucesso!`);
+        console.log(`✅ Pagamento confirmado para o pedido ${pedidoId}`);
       }
     }
     
@@ -977,7 +867,6 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
   
   try {
-    // Verifica se o username já existe
     const existCheck = await pool.query(
       'SELECT id FROM users WHERE username = $1', 
       [username]
@@ -1001,62 +890,6 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Erro ao criar usuário:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Adicione esta rota no server.js
-app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
-  const { userId } = req.body;
-  
-  if (!userId) {
-    return res.status(400).json({ success: false, message: 'Usuário não informado.' });
-  }
-  
-  try {
-    // Busca o usuário para saber o username
-    const userResult = await pool.query(
-      'SELECT username FROM users WHERE id = $1',
-      [userId]
-    );
-    
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-    }
-    
-    const username = userResult.rows[0].username;
-    
-    // 🔥 Opção 1: Se você usa localStorage no frontend, o reset é feito lá
-    // O backend apenas registra a ação
-    
-    // 🔥 Opção 2: Se você tem uma tabela de downloads no banco
-    // const result = await pool.query(
-    //   'DELETE FROM downloads WHERE user_id = $1',
-    //   [userId]
-    // );
-    
-    // Registra a ação no log
-    console.log(`🔄 Downloads resetados para o usuário ${username} (ID: ${userId})`);
-    
-    // Registra a transação
-    try {
-      await pool.query(
-        `INSERT INTO transactions (user_id, amount, type, description, created_at) 
-         VALUES ($1, $2, 'admin_reset_downloads', $3, NOW())`,
-        [userId, 0, `Reset de downloads pelo admin`]
-      );
-    } catch (e) {
-      console.warn('⚠️ Erro ao registrar transação:', e.message);
-    }
-    
-    res.json({
-      success: true,
-      message: `Downloads resetados para o usuário ${username}`,
-      resetCount: 0 // ou result.rowCount se tiver tabela
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao resetar downloads:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -1262,7 +1095,107 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 11. INICIALIZAÇÃO DO SERVIDOR
+// 11. ROTAS DE RESET DE DOWNLOADS
+// ============================================================
+
+// RESETAR DOWNLOADS DO USUÁRIO (ADMIN)
+app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
+  const { userId } = req.body;
+  
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'Usuário não informado.' });
+  }
+  
+  try {
+    const userResult = await pool.query(
+      'SELECT id, username FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+    
+    const username = userResult.rows[0].username;
+    
+    await pool.query(
+      `INSERT INTO user_resets (user_id, reset_type, performed_by) 
+       VALUES ($1, 'downloads', $2)`,
+      [userId, userId]
+    );
+    
+    console.log(`🔄 Downloads resetados para o usuário ${username} (ID: ${userId})`);
+    
+    try {
+      await pool.query(
+        `INSERT INTO transactions (user_id, amount, type, description, created_at) 
+         VALUES ($1, $2, 'admin_reset_downloads', $3, NOW())`,
+        [userId, 0, `Reset de downloads pelo admin para ${username}`]
+      );
+    } catch (e) {
+      console.warn('⚠️ Erro ao registrar transação:', e.message);
+    }
+    
+    res.json({
+      success: true,
+      message: `Downloads resetados para o usuário ${username}`,
+      username: username,
+      resetCount: 0
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao resetar downloads:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// VERIFICAR SE HOUVE RESET PARA UM USUÁRIO
+app.get('/api/auth/check-reset/:username', async (req, res) => {
+  const { username } = req.params;
+  
+  try {
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE username = $1',
+      [username]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.json({ success: true, hasReset: false });
+    }
+    
+    const userId = userResult.rows[0].id;
+    
+    const resetResult = await pool.query(
+      `SELECT id, reset_at FROM user_resets 
+       WHERE user_id = $1 AND reset_type = 'downloads' 
+       ORDER BY reset_at DESC LIMIT 1`,
+      [userId]
+    );
+    
+    if (resetResult.rows.length > 0) {
+      const resetAt = new Date(resetResult.rows[0].reset_at);
+      const now = new Date();
+      const diffHours = (now - resetAt) / (1000 * 60 * 60);
+      
+      if (diffHours < 168) {
+        return res.json({
+          success: true,
+          hasReset: true,
+          resetAt: resetResult.rows[0].reset_at
+        });
+      }
+    }
+    
+    res.json({ success: true, hasReset: false });
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar reset:', error);
+    res.json({ success: false, hasReset: false });
+  }
+});
+
+// ============================================================
+// 12. INICIALIZAÇÃO DO SERVIDOR
 // ============================================================
 const PORT = process.env.PORT || 3000;
 
@@ -1276,6 +1209,7 @@ app.listen(PORT, async () => {
   console.log('📦 Rota /api/pacote/personalizado ativa!');
   console.log('🔐 Rotas Admin ativas com autenticação.');
   console.log('👤 Login usando APENAS usuário e senha!');
+  console.log('🔄 Rotas de reset de downloads ativas!');
   console.log('\n📋 Credenciais Admin:');
   console.log('   👤 Usuário: admin');
   console.log('   🔑 Senha: admin123\n');
