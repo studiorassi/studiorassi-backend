@@ -255,7 +255,19 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela transactions verificada/criada');
 
-    // 6. Cria tabela user_resets para controle de reset de downloads
+    // 6. Cria tabela user_downloads para controle de downloads por usuário
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_downloads (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        item_id VARCHAR(100) NOT NULL,
+        downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, item_id)
+      )
+    `);
+    console.log('✅ Tabela user_downloads verificada/criada');
+
+    // 7. Cria tabela user_resets para controle de reset de downloads (apenas admin)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_resets (
         id SERIAL PRIMARY KEY,
@@ -267,7 +279,7 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela user_resets verificada/criada');
 
-    // 7. Cria usuário admin padrão (se não existir)
+    // 8. Cria usuário admin padrão (se não existir)
     const adminCheck = await pool.query(`
       SELECT id FROM users WHERE username = 'admin'
     `);
@@ -288,7 +300,7 @@ async function setupDatabase() {
       `);
     }
 
-    // 8. Mostra estrutura atual da tabela
+    // 9. Mostra estrutura atual da tabela
     const structure = await pool.query(`
       SELECT column_name, data_type, is_nullable
       FROM information_schema.columns 
@@ -451,7 +463,65 @@ app.post('/api/auth/debit-credit', async (req, res) => {
 });
 
 // ============================================================
-// 7. ROTAS DE GALERIA
+// 7. ROTAS DE DOWNLOADS (SALVOS NO BANCO)
+// ============================================================
+
+// Buscar downloads do usuário
+app.get('/api/auth/downloads', async (req, res) => {
+  try {
+    const user = await getUserByRequest(req);
+    if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    
+    const result = await pool.query(
+      'SELECT item_id FROM user_downloads WHERE user_id = $1 ORDER BY downloaded_at DESC',
+      [user.id]
+    );
+    
+    const downloads = result.rows.map(row => row.item_id);
+    return res.json({ success: true, downloads });
+  } catch (error) {
+    console.error('❌ Erro ao buscar downloads:', error);
+    return res.status(500).json({ success: false, message: 'Erro no servidor.' });
+  }
+});
+
+// Salvar downloads do usuário
+app.post('/api/auth/downloads', async (req, res) => {
+  try {
+    const user = await getUserByRequest(req);
+    if (!user) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    
+    const { downloads } = req.body;
+    if (!downloads || !Array.isArray(downloads)) {
+      return res.status(400).json({ success: false, message: 'Lista de downloads inválida.' });
+    }
+    
+    // Limpa downloads existentes
+    await pool.query('DELETE FROM user_downloads WHERE user_id = $1', [user.id]);
+    
+    // Insere novos downloads
+    if (downloads.length > 0) {
+      const values = downloads.map((itemId, index) => 
+        `($${index * 2 + 1}, $${index * 2 + 2})`
+      ).join(', ');
+      
+      const params = downloads.flatMap(itemId => [user.id, itemId]);
+      
+      await pool.query(
+        `INSERT INTO user_downloads (user_id, item_id) VALUES ${values}`,
+        params
+      );
+    }
+    
+    return res.json({ success: true, count: downloads.length });
+  } catch (error) {
+    console.error('❌ Erro ao salvar downloads:', error);
+    return res.status(500).json({ success: false, message: 'Erro no servidor.' });
+  }
+});
+
+// ============================================================
+// 8. ROTAS DE GALERIA
 // ============================================================
 app.get('/api/gallery/list/:folder', async (req, res) => {
   const { folder } = req.params;
@@ -622,7 +692,7 @@ app.post('/api/gallery/download', async (req, res) => {
 });
 
 // ============================================================
-// 8. ROTA PACOTE PERSONALIZADO
+// 9. ROTA PACOTE PERSONALIZADO
 // ============================================================
 app.post('/api/pacote/personalizado', async (req, res) => {
   const { fotos, addons, data, horario, total, cliente_nome, cliente_email } = req.body;
@@ -758,7 +828,7 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 9. WEBHOOK
+// 10. WEBHOOK
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -803,7 +873,7 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
 });
 
 // ============================================================
-// 10. ROTAS ADMIN
+// 11. ROTAS ADMIN
 // ============================================================
 
 // Middleware de autenticação admin
@@ -822,12 +892,14 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
     const users = await pool.query('SELECT COUNT(*) FROM users');
     const credits = await pool.query('SELECT SUM(credits) FROM users');
     const orders = await pool.query('SELECT COUNT(*) FROM pedidos');
+    const downloads = await pool.query('SELECT COUNT(*) FROM user_downloads');
     
     res.json({
       success: true,
       users: parseInt(users.rows[0].count) || 0,
       credits: parseInt(credits.rows[0].sum) || 0,
       orders: parseInt(orders.rows[0].count) || 0,
+      downloads: parseInt(downloads.rows[0].count) || 0,
       photos: 116
     });
   } catch (error) {
@@ -858,7 +930,7 @@ app.get('/api/admin/users', authAdmin, async (req, res) => {
   }
 });
 
-// Criar usuário (APENAS USERNAME E SENHA)
+// Criar usuário
 app.post('/api/admin/users', authAdmin, async (req, res) => {
   const { username, password, credits, name } = req.body;
   
@@ -870,7 +942,6 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
   }
   
   try {
-    // Verifica se o username já existe
     const existCheck = await pool.query(
       'SELECT id FROM users WHERE username = $1', 
       [username]
@@ -878,7 +949,7 @@ app.post('/api/admin/users', authAdmin, async (req, res) => {
     if (existCheck.rows.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Este usuário já existe. Escolha outro nome.' 
+        message: 'Este usuário já existe.' 
       });
     }
     
@@ -1099,7 +1170,7 @@ app.get('/api/admin/orders', authAdmin, async (req, res) => {
 });
 
 // ============================================================
-// 11. ROTAS DE RESET DE DOWNLOADS (NOVAS)
+// 12. ROTAS DE RESET DE DOWNLOADS (APENAS ADMIN)
 // ============================================================
 
 // RESETAR DOWNLOADS DO USUÁRIO (ADMIN)
@@ -1122,6 +1193,12 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
     }
     
     const username = userResult.rows[0].username;
+    
+    // Remove todos os downloads do usuário
+    await pool.query(
+      'DELETE FROM user_downloads WHERE user_id = $1',
+      [userId]
+    );
     
     // Registra o reset na tabela user_resets
     await pool.query(
@@ -1173,7 +1250,7 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
     
     const userId = userResult.rows[0].id;
     
-    // Verifica se houve reset nos últimos 7 dias
+    // Verifica se houve reset (sempre que houver registro, considera reset)
     const resetResult = await pool.query(
       `SELECT id, reset_at FROM user_resets 
        WHERE user_id = $1 AND reset_type = 'downloads' 
@@ -1182,18 +1259,11 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
     );
     
     if (resetResult.rows.length > 0) {
-      const resetAt = new Date(resetResult.rows[0].reset_at);
-      const now = new Date();
-      const diffHours = (now - resetAt) / (1000 * 60 * 60);
-      
-      // Se o reset foi nas últimas 168 horas (7 dias), considera que houve reset
-      if (diffHours < 168) {
-        return res.json({
-          success: true,
-          hasReset: true,
-          resetAt: resetResult.rows[0].reset_at
-        });
-      }
+      return res.json({
+        success: true,
+        hasReset: true,
+        resetAt: resetResult.rows[0].reset_at
+      });
     }
     
     res.json({ success: true, hasReset: false });
@@ -1205,7 +1275,7 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
 });
 
 // ============================================================
-// 12. INICIALIZAÇÃO DO SERVIDOR
+// 13. INICIALIZAÇÃO DO SERVIDOR
 // ============================================================
 const PORT = process.env.PORT || 3000;
 
@@ -1216,10 +1286,11 @@ app.listen(PORT, async () => {
   console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
   console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
   console.log('✅ Sistema de créditos funcionando sem reset automático.');
+  console.log('✅ Downloads salvos no banco de dados (sincronização multi-dispositivo).');
   console.log('📦 Rota /api/pacote/personalizado ativa!');
   console.log('🔐 Rotas Admin ativas com autenticação.');
   console.log('👤 Login usando APENAS usuário e senha!');
-  console.log('🔄 Rotas de reset de downloads ativas!');
+  console.log('🔄 Rotas de reset de downloads ativas (apenas ADMIN).');
   console.log('\n📋 Credenciais Admin:');
   console.log('   👤 Usuário: admin');
   console.log('   🔑 Senha: admin123\n');
