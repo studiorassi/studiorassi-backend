@@ -279,6 +279,24 @@ async function setupDatabase() {
     `);
     console.log('✅ Tabela user_resets verificada/criada');
 
+    // 🔥 NOVA TABELA: pedidos_avulsos para compras de fotos/vídeos individuais
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pedidos_avulsos (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        item_id VARCHAR(100) NOT NULL,
+        item_type VARCHAR(20) NOT NULL,
+        item_title VARCHAR(200),
+        item_key VARCHAR(500),
+        price DECIMAL(10,2),
+        status VARCHAR(20) DEFAULT 'pendente',
+        payment_id VARCHAR(100),
+        payment_status VARCHAR(20),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Tabela pedidos_avulsos verificada/criada');
+
     // 8. Cria usuário admin padrão (se não existir)
     const adminCheck = await pool.query(`
       SELECT id FROM users WHERE username = 'admin'
@@ -828,7 +846,186 @@ app.post('/api/pacote/personalizado', async (req, res) => {
 });
 
 // ============================================================
-// 10. WEBHOOK
+// 🔥 ROTAS PARA COMPRA AVULSA (FOTOS E VÍDEOS)
+// ============================================================
+
+// Criar pedido avulso para foto ou vídeo
+app.post('/api/pedidos/avulso', async (req, res) => {
+  const { itemId, itemType, itemTitle, itemKey, price, cliente_nome, cliente_email } = req.body;
+  
+  try {
+    if (!itemId || !itemType || !itemKey || !price) {
+      return res.status(400).json({
+        success: false,
+        message: 'Dados incompletos. Preencha todos os campos.'
+      });
+    }
+
+    // Busca o usuário pelo token
+    const user = await getUserByRequest(req);
+    
+    const pedidoId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const userName = user ? user.name || user.username : (cliente_nome || 'Cliente');
+    const userEmail = user ? user.username : (cliente_email || 'cliente@email.com');
+    const userId = user ? user.id : null;
+
+    console.log(`🛒 Novo pedido avulso:`);
+    console.log(`   📦 ID: ${pedidoId}`);
+    console.log(`   🏷️ Item: ${itemTitle} (${itemType})`);
+    console.log(`   💰 Preço: R$ ${price.toFixed(2)}`);
+    console.log(`   👤 Cliente: ${userName}`);
+
+    // Salva no banco de dados
+    await pool.query(`
+      INSERT INTO pedidos_avulsos (
+        id, user_id, item_id, item_type, item_title, item_key, 
+        price, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pendente')
+    `, [pedidoId, userId, itemId, itemType, itemTitle, itemKey, price]);
+
+    const MERCADO_PAGO_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
+
+    if (MERCADO_PAGO_ACCESS_TOKEN) {
+      try {
+        const { MercadoPagoConfig, Preference } = require('mercadopago');
+        const client = new MercadoPagoConfig({ accessToken: MERCADO_PAGO_ACCESS_TOKEN });
+        const preference = new Preference(client);
+
+        const typeLabel = itemType === 'video' ? 'Vídeo' : 'Foto';
+        const preferenceData = {
+          items: [{
+            id: `avulso_${pedidoId}`,
+            title: `${typeLabel}: ${itemTitle}`,
+            description: `Compra avulsa de ${typeLabel.toLowerCase()} em alta definição sem marca d'água`,
+            quantity: 1,
+            unit_price: price,
+            currency_id: 'BRL',
+            picture_url: 'https://studiorassi.github.io/home/assets/images/logo/logo-full.png'
+          }],
+          back_urls: {
+            success: 'https://studiorassi.github.io/home/pagamento-sucesso.html',
+            failure: 'https://studiorassi.github.io/home/pagamento-falha.html',
+            pending: 'https://studiorassi.github.io/home/pagamento-pendente.html'
+          },
+          auto_return: 'approved',
+          notification_url: 'https://api-studiorassi.onrender.com/api/webhooks/mercadopago',
+          external_reference: String(pedidoId),
+          payer: {
+            name: userName,
+            email: userEmail
+          },
+          statement_descriptor: 'STUDIO RASSI'
+        };
+
+        const preferenceResponse = await preference.create({ body: preferenceData });
+
+        await pool.query(
+          'UPDATE pedidos_avulsos SET payment_id = $1 WHERE id = $2',
+          [preferenceResponse.id, pedidoId]
+        );
+
+        return res.json({
+          success: true,
+          checkout_url: preferenceResponse.init_point,
+          preference_id: preferenceResponse.id,
+          pedido_id: pedidoId
+        });
+
+      } catch (mpError) {
+        console.warn('⚠️ Erro no Mercado Pago:', mpError.message);
+      }
+    }
+
+    // Fallback: modo simulação
+    console.log('⚠️ Mercado Pago não configurado. Usando modo de simulação.');
+    const checkout_url = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${pedidoId}`;
+
+    return res.json({
+      success: true,
+      checkout_url: checkout_url,
+      preference_id: pedidoId,
+      pedido_id: pedidoId,
+      message: 'Link de pagamento gerado (modo simulação)'
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao criar pedido avulso:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao processar a compra.'
+    });
+  }
+});
+
+// 🔥 CONSULTAR STATUS DO PEDIDO AVULSO
+app.get('/api/pedidos/avulso/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await pool.query(
+      'SELECT id, status, payment_status, payment_id, item_id, item_type, item_title FROM pedidos_avulsos WHERE id = $1',
+      [id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido não encontrado.'
+      });
+    }
+    
+    const pedido = result.rows[0];
+    
+    return res.json({
+      success: true,
+      id: pedido.id,
+      status: pedido.status,
+      payment_status: pedido.payment_status,
+      payment_id: pedido.payment_id,
+      item_id: pedido.item_id,
+      item_type: pedido.item_type,
+      item_title: pedido.item_title,
+      isPaid: pedido.status === 'confirmado' || pedido.payment_status === 'approved'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao consultar pedido avulso:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao consultar pedido.'
+    });
+  }
+});
+
+// 🔥 VERIFICAR SE O USUÁRIO JÁ COMPROU UM ITEM
+app.get('/api/pedidos/avulso/check/:itemId', async (req, res) => {
+  const { itemId } = req.params;
+  
+  try {
+    const user = await getUserByRequest(req);
+    if (!user) {
+      return res.json({ success: true, hasPurchased: false });
+    }
+    
+    const result = await pool.query(
+      `SELECT id FROM pedidos_avulsos 
+       WHERE user_id = $1 AND item_id = $2 AND status = 'confirmado'`,
+      [user.id, itemId]
+    );
+    
+    return res.json({
+      success: true,
+      hasPurchased: result.rows.length > 0
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar compra:', error);
+    return res.json({ success: true, hasPurchased: false });
+  }
+});
+
+// ============================================================
+// 10. WEBHOOK - ATUALIZADO PARA PEDIDOS AVULSOS
 // ============================================================
 app.post('/api/webhooks/mercadopago', async (req, res) => {
   try {
@@ -846,21 +1043,52 @@ app.post('/api/webhooks/mercadopago', async (req, res) => {
       const payment = await paymentResponse.json();
       
       if (payment.status === 'approved') {
-        const pedidoId = payment.external_reference;
+        const externalRef = payment.external_reference;
         
-        await pool.query(`
+        // 🔥 ATUALIZA PEDIDOS AVULSOS
+        const avulsoResult = await pool.query(`
+          UPDATE pedidos_avulsos 
+          SET status = 'confirmado', payment_status = 'approved', payment_id = $1
+          WHERE id = $2 AND status = 'pendente'
+          RETURNING id, user_id, item_id, item_type
+        `, [paymentId, externalRef]);
+        
+        if (avulsoResult.rows.length > 0) {
+          const pedido = avulsoResult.rows[0];
+          console.log(`✅ Pagamento confirmado para pedido avulso ${pedido.id} - ${pedido.item_type}: ${pedido.item_id}`);
+          
+          // 🔥 REGISTRA O DOWNLOAD AUTOMATICAMENTE
+          if (pedido.user_id) {
+            await pool.query(`
+              INSERT INTO user_downloads (user_id, item_id) 
+              VALUES ($1, $2)
+              ON CONFLICT (user_id, item_id) DO NOTHING
+            `, [pedido.user_id, pedido.item_id]);
+            console.log(`📥 Download registrado para usuário ${pedido.user_id} - item ${pedido.item_id}`);
+          }
+        }
+        
+        // 🔥 ATUALIZA PEDIDOS PERSONALIZADOS (PACOTES)
+        const pacoteResult = await pool.query(`
           UPDATE pedidos 
           SET status = 'confirmado', payment_status = 'approved', payment_id = $1
-          WHERE id = $2
-        `, [paymentId, pedidoId]);
+          WHERE id = $2 AND status = 'pendente'
+        `, [paymentId, externalRef]);
         
-        await pool.query(`
-          UPDATE agendamentos 
-          SET status = 'confirmado'
-          WHERE pedido_id = $1
-        `, [pedidoId]);
+        if (pacoteResult.rows.length > 0) {
+          const pedido = pacoteResult.rows[0];
+          console.log(`✅ Pagamento confirmado para pedido personalizado ${pedido.id}`);
+          
+          await pool.query(`
+            UPDATE agendamentos 
+            SET status = 'confirmado'
+            WHERE pedido_id = $1
+          `, [externalRef]);
+        }
         
-        console.log(`✅ Pagamento confirmado para o pedido ${pedidoId}`);
+        if (avulsoResult.rows.length === 0 && pacoteResult.rows.length === 0) {
+          console.log(`⚠️ Pedido ${externalRef} não encontrado ou já processado`);
+        }
       }
     }
     
@@ -892,6 +1120,7 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
     const users = await pool.query('SELECT COUNT(*) FROM users');
     const credits = await pool.query('SELECT SUM(credits) FROM users');
     const orders = await pool.query('SELECT COUNT(*) FROM pedidos');
+    const avulsoOrders = await pool.query('SELECT COUNT(*) FROM pedidos_avulsos');
     const downloads = await pool.query('SELECT COUNT(*) FROM user_downloads');
     
     res.json({
@@ -899,6 +1128,7 @@ app.get('/api/admin/stats', authAdmin, async (req, res) => {
       users: parseInt(users.rows[0].count) || 0,
       credits: parseInt(credits.rows[0].sum) || 0,
       orders: parseInt(orders.rows[0].count) || 0,
+      avulsoOrders: parseInt(avulsoOrders.rows[0].count) || 0,
       downloads: parseInt(downloads.rows[0].count) || 0,
       photos: 116
     });
@@ -1156,13 +1386,20 @@ app.post('/api/admin/credits/reset', authAdmin, async (req, res) => {
   }
 });
 
-// Listar pedidos (admin)
+// Listar pedidos (admin) - incluindo avulsos
 app.get('/api/admin/orders', authAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM pedidos ORDER BY created_at DESC LIMIT 20'
+    const pedidos = await pool.query(
+      "SELECT *, 'pacote' as tipo FROM pedidos ORDER BY created_at DESC LIMIT 20"
     );
-    res.json({ success: true, orders: result.rows });
+    const avulsos = await pool.query(
+      "SELECT *, 'avulso' as tipo FROM pedidos_avulsos ORDER BY created_at DESC LIMIT 20"
+    );
+    
+    const allOrders = [...pedidos.rows, ...avulsos.rows];
+    allOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    res.json({ success: true, orders: allOrders });
   } catch (error) {
     console.error('❌ Erro ao listar pedidos:', error);
     res.status(500).json({ success: false, message: error.message });
@@ -1182,7 +1419,6 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
   }
   
   try {
-    // Busca o usuário
     const userResult = await pool.query(
       'SELECT id, username FROM users WHERE id = $1',
       [userId]
@@ -1194,13 +1430,11 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
     
     const username = userResult.rows[0].username;
     
-    // Remove todos os downloads do usuário
     await pool.query(
       'DELETE FROM user_downloads WHERE user_id = $1',
       [userId]
     );
     
-    // Registra o reset na tabela user_resets
     await pool.query(
       `INSERT INTO user_resets (user_id, reset_type, performed_by) 
        VALUES ($1, 'downloads', $2)`,
@@ -1209,7 +1443,6 @@ app.post('/api/admin/reset-downloads', authAdmin, async (req, res) => {
     
     console.log(`🔄 Downloads resetados para o usuário ${username} (ID: ${userId})`);
     
-    // Registra a transação
     try {
       await pool.query(
         `INSERT INTO transactions (user_id, amount, type, description, created_at) 
@@ -1238,7 +1471,6 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
   const { username } = req.params;
   
   try {
-    // Busca o usuário
     const userResult = await pool.query(
       'SELECT id FROM users WHERE username = $1',
       [username]
@@ -1250,7 +1482,6 @@ app.get('/api/auth/check-reset/:username', async (req, res) => {
     
     const userId = userResult.rows[0].id;
     
-    // Verifica se houve reset (sempre que houver registro, considera reset)
     const resetResult = await pool.query(
       `SELECT id, reset_at FROM user_resets 
        WHERE user_id = $1 AND reset_type = 'downloads' 
@@ -1285,9 +1516,12 @@ app.listen(PORT, async () => {
   console.log(`\n🚀 Servidor Studio Rassi rodando na porta ${PORT}`);
   console.log(`📁 Bucket Clientes: ${BUCKET_NAME}`);
   console.log(`📁 Bucket Fornecedor: ${BUCKET_FORNECEDOR}`);
-  console.log('✅ Sistema de créditos funcionando sem reset automático.');
-  console.log('✅ Downloads salvos no banco de dados (sincronização multi-dispositivo).');
-  console.log('📦 Rota /api/pacote/personalizado ativa!');
+  console.log('✅ Sistema de créditos funcionando');
+  console.log('✅ Downloads salvos no banco de dados');
+  console.log('✅ Rota /api/pacote/personalizado ativa!');
+  console.log('✅ Rota /api/pedidos/avulso ativa! (COMPRA AVULSA)');
+  console.log('✅ Rota /api/pedidos/avulso/:id ativa! (CONSULTA STATUS)');
+  console.log('✅ Webhook atualizado para pedidos avulsos!');
   console.log('🔐 Rotas Admin ativas com autenticação.');
   console.log('👤 Login usando APENAS usuário e senha!');
   console.log('🔄 Rotas de reset de downloads ativas (apenas ADMIN).');
